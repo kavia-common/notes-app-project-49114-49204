@@ -1,8 +1,10 @@
 //
+//
 // Notes service: switches between API-backed and local in-memory storage
 // Adds categories/folders and sorting/filtering with local persistence and migration.
 // Adds attachments support with local data URL persistence and API stubs.
 // Adds reminders with local scheduler helpers and API stubs.
+// Adds pinned/favorite support with migration, sorting, and API patch stubs.
 //
 const API_BASE =
   process.env.REACT_APP_API_BASE ||
@@ -30,8 +32,8 @@ const ATTACHMENTS_LIMIT_PER_NOTE = 10;
 
 /* ===== Local in-memory store with localStorage persistence ===== */
 const LS_KEY = "notes.mvp.list"; // legacy notes array
-const LS_KEY_NOTES_STATE = "notes.mvp.state.v2"; // new state object (notes + meta)
-const MIGRATION_FLAG = "notes.migrated.v2";
+const LS_KEY_NOTES_STATE = "notes.mvp.state.v3"; // bumped to v3 to include pinned/favorite
+const MIGRATION_FLAG = "notes.migrated.v3";
 
 /**
  * Local state shape:
@@ -45,7 +47,10 @@ const MIGRATION_FLAG = "notes.migrated.v2";
  *       reminderId?: string,
  *       reminderStatus?: 'pending'|'fired'|'dismissed'|'snoozed',
  *       repeat?: 'none'|'daily'|'weekly'
- *     }
+ *     },
+ *     pinned?: boolean,
+ *     pinnedAt?: string|null, // ISO when pinned
+ *     favorite?: boolean
  *   }],
  *   categories: string[]
  * }
@@ -61,6 +66,19 @@ function readLocalLegacyNotes() {
   }
 }
 
+function normalizeNoteBooleans(n) {
+  return {
+    ...n,
+    pinned: !!n.pinned,
+    favorite: !!n.favorite,
+    pinnedAt: n.pinned
+      ? n.pinnedAt
+        ? new Date(n.pinnedAt).toISOString()
+        : n.updated_at || n.created_at || new Date().toISOString()
+      : null,
+  };
+}
+
 function readLocalState() {
   try {
     const raw = localStorage.getItem(LS_KEY_NOTES_STATE);
@@ -68,12 +86,14 @@ function readLocalState() {
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.notes)) {
       // normalize fields
-      parsed.notes = parsed.notes.map((n) => ({
-        ...n,
-        categories: Array.isArray(n.categories) ? n.categories : [],
-        attachments: Array.isArray(n.attachments) ? n.attachments : [],
-        reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
-      }));
+      parsed.notes = parsed.notes.map((n) =>
+        normalizeNoteBooleans({
+          ...n,
+          categories: Array.isArray(n.categories) ? n.categories : [],
+          attachments: Array.isArray(n.attachments) ? n.attachments : [],
+          reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+        })
+      );
       parsed.categories = Array.isArray(parsed.categories)
         ? Array.from(new Set(parsed.categories))
         : [];
@@ -96,23 +116,57 @@ function writeLocalState(state) {
 function migrateIfNeeded() {
   try {
     if (localStorage.getItem(MIGRATION_FLAG)) return;
-    const newState = readLocalState();
-    if (newState) {
+
+    // v2 -> v3 migration path: try current; else read older v2 or legacy
+    let state = null;
+    try {
+      const rawV3 = localStorage.getItem(LS_KEY_NOTES_STATE);
+      if (rawV3) {
+        state = JSON.parse(rawV3);
+      } else {
+        const rawV2 = localStorage.getItem("notes.mvp.state.v2");
+        if (rawV2) {
+          state = JSON.parse(rawV2);
+        }
+      }
+    } catch {
+      state = null;
+    }
+
+    if (state && Array.isArray(state.notes)) {
+      const migrated = {
+        notes: state.notes.map((n) =>
+          normalizeNoteBooleans({
+            ...n,
+            categories: Array.isArray(n.categories) ? n.categories : [],
+            attachments: Array.isArray(n.attachments) ? n.attachments : [],
+            reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+          })
+        ),
+        categories: Array.isArray(state.categories) ? state.categories : [],
+      };
+      writeLocalState(migrated);
       localStorage.setItem(MIGRATION_FLAG, "1");
       return;
     }
+
     const legacy = readLocalLegacyNotes();
     if (legacy && Array.isArray(legacy) && legacy.length >= 0) {
       const migrated = {
-        notes: legacy.map((n) => ({
-          ...n,
-          categories: Array.isArray(n.categories) ? n.categories : [],
-          attachments: Array.isArray(n.attachments) ? n.attachments : [],
-          reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
-        })),
+        notes: legacy.map((n) =>
+          normalizeNoteBooleans({
+            ...n,
+            categories: Array.isArray(n.categories) ? n.categories : [],
+            attachments: Array.isArray(n.attachments) ? n.attachments : [],
+            reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+          })
+        ),
         categories: [],
       };
       writeLocalState(migrated);
+      localStorage.setItem(MIGRATION_FLAG, "1");
+    } else {
+      writeLocalState({ notes: [], categories: [] });
       localStorage.setItem(MIGRATION_FLAG, "1");
     }
   } catch {
@@ -164,6 +218,7 @@ function toBase64(file) {
   });
 }
 
+// Sort/filter now needs to place pinned first (by pinnedAt desc) among matched notes
 function applySortFilter(notes, options = {}) {
   const { sortBy = DEFAULT_SORT, category, query } = options;
   let arr = Array.isArray(notes) ? [...notes] : [];
@@ -194,32 +249,51 @@ function applySortFilter(notes, options = {}) {
     });
   }
 
-  // Sorting
+  // Split pinned and others
+  const pinned = [];
+  const others = [];
+  for (const n of arr) {
+    if (n.pinned) pinned.push(n);
+    else others.push(n);
+  }
+
   const compareStr = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
   const compareDate = (a, b) => new Date(a).getTime() - new Date(b).getTime();
 
+  // Sort "others" by existing sort rules
   switch (sortBy) {
     case "updated_asc":
-      arr.sort((a, b) => compareDate(a.updated_at || a.created_at, b.updated_at || b.created_at));
+      others.sort((a, b) => compareDate(a.updated_at || a.created_at, b.updated_at || b.created_at));
       break;
     case "updated_desc":
-      arr.sort((a, b) => compareDate(b.updated_at || b.created_at, a.updated_at || a.created_at));
+      others.sort((a, b) => compareDate(b.updated_at || b.created_at, a.updated_at || a.created_at));
       break;
     case "created_asc":
-      arr.sort((a, b) => compareDate(a.created_at, b.created_at));
+      others.sort((a, b) => compareDate(a.created_at, b.created_at));
       break;
     case "created_desc":
-      arr.sort((a, b) => compareDate(b.created_at, a.created_at));
+      others.sort((a, b) => compareDate(b.created_at, a.created_at));
       break;
     case "title_desc":
-      arr.sort((a, b) => compareStr(b.title || "", a.title || ""));
+      others.sort((a, b) => compareStr(b.title || "", a.title || ""));
       break;
     case "title_asc":
     default:
-      arr.sort((a, b) => compareStr(a.title || "", b.title || ""));
+      others.sort((a, b) => compareStr(a.title || "", b.title || ""));
       break;
   }
-  return arr;
+
+  // Sort pinned by pinnedAt desc, tie-breaker: updated_at desc
+  pinned.sort((a, b) => {
+    const pa = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+    const pb = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+    if (pb !== pa) return pb - pa;
+    const ua = new Date(a.updated_at || a.created_at).getTime();
+    const ub = new Date(b.updated_at || b.created_at).getTime();
+    return ub - ua;
+  });
+
+  return [...pinned, ...others];
 }
 
 // PUBLIC_INTERFACE
@@ -244,12 +318,14 @@ export async function listNotes(options = {}) {
       if (!res.ok) throw new Error(`Failed to fetch notes: ${res.status}`);
       const data = await res.json();
       const normalized = Array.isArray(data)
-        ? data.map((n) => ({
-            ...n,
-            categories: Array.isArray(n.categories) ? n.categories : [],
-            attachments: Array.isArray(n.attachments) ? n.attachments : [],
-            reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
-          }))
+        ? data.map((n) =>
+            normalizeNoteBooleans({
+              ...n,
+              categories: Array.isArray(n.categories) ? n.categories : [],
+              attachments: Array.isArray(n.attachments) ? n.attachments : [],
+              reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+            })
+          )
         : [];
       return applySortFilter(normalized, options);
     } catch (e) {
@@ -317,24 +393,32 @@ export async function createNote(note) {
       });
       if (!res.ok) throw new Error(`Failed to create note: ${res.status}`);
       const created = await res.json();
-      return {
+      return normalizeNoteBooleans({
         ...created,
         categories: Array.isArray(created.categories) ? created.categories : [],
         attachments: Array.isArray(created.attachments) ? created.attachments : [],
         reminder: created.reminder ? normalizeReminder(created.reminder) : undefined,
-      };
+      });
     } catch (e) {
       console.warn("Falling back to local create due to API error:", e.message);
-      return localCreateNote({ ...payload, attachments: note.attachments || [], reminder: note.reminder });
+      return localCreateNote({
+        ...payload,
+        attachments: note.attachments || [],
+        reminder: note.reminder,
+      });
     }
   }
-  return localCreateNote({ ...payload, attachments: note.attachments || [], reminder: note.reminder });
+  return localCreateNote({
+    ...payload,
+    attachments: note.attachments || [],
+    reminder: note.reminder,
+  });
 }
 
 /** PUBLIC_INTERFACE */
 export async function updateNote(id, note) {
   /**
-   * Update a note by id with {title?, content?, categories?, attachments?, reminder?}; API if available, else local.
+   * Update a note by id with {title?, content?, categories?, attachments?, reminder?, pinned?, favorite?, pinnedAt?}; API if available, else local.
    * For API path, attachments should be managed by upload/deleteAttachment endpoints, so we ignore attachments array here.
    */
   const payload = {
@@ -349,6 +433,9 @@ export async function updateNote(id, note) {
       ? { attachments: Array.isArray(note.attachments) ? note.attachments : [] }
       : {}),
     ...(note.reminder !== undefined ? { reminder: normalizeReminder(note.reminder) } : {}),
+    ...(note.pinned !== undefined ? { pinned: !!note.pinned } : {}),
+    ...(note.favorite !== undefined ? { favorite: !!note.favorite } : {}),
+    ...(note.pinnedAt !== undefined ? { pinnedAt: note.pinnedAt } : {}),
   };
   if (useApi) {
     try {
@@ -359,12 +446,12 @@ export async function updateNote(id, note) {
       });
       if (!res.ok) throw new Error(`Failed to update note: ${res.status}`);
       const updated = await res.json();
-      return {
+      return normalizeNoteBooleans({
         ...updated,
         categories: Array.isArray(updated.categories) ? updated.categories : [],
         attachments: Array.isArray(updated.attachments) ? updated.attachments : [],
         reminder: updated.reminder ? normalizeReminder(updated.reminder) : undefined,
-      };
+      });
     } catch (e) {
       console.warn("Falling back to local update due to API error:", e.message);
       return localUpdateNote(id, payload);
@@ -523,7 +610,7 @@ function localListNotes() {
 function localCreateNote(payload) {
   const state = ensureState();
   const now = new Date().toISOString();
-  const newNote = {
+  const newNote = normalizeNoteBooleans({
     id: nextId(state.notes),
     title: payload.title,
     content: payload.content,
@@ -532,7 +619,10 @@ function localCreateNote(payload) {
     reminder: payload.reminder ? normalizeReminder(payload.reminder) : undefined,
     created_at: now,
     updated_at: now,
-  };
+    pinned: false,
+    favorite: false,
+    pinnedAt: null,
+  });
   const next = [newNote, ...state.notes];
   saveNotes(next);
   // Update categories list with any new categories
@@ -556,8 +646,18 @@ function localUpdateNote(id, payload) {
     return Promise.reject(new Error("Note not found"));
   }
   const now = new Date().toISOString();
-  const updated = {
-    ...state.notes[idx],
+  const prev = state.notes[idx];
+  const pinnedIncoming = payload.pinned;
+  let pinnedAtPatch = {};
+  if (pinnedIncoming !== undefined) {
+    if (pinnedIncoming && !prev.pinned) {
+      pinnedAtPatch = { pinnedAt: now };
+    } else if (!pinnedIncoming && prev.pinned) {
+      pinnedAtPatch = { pinnedAt: null };
+    }
+  }
+  const updated = normalizeNoteBooleans({
+    ...prev,
     ...(payload.title !== undefined ? { title: payload.title } : {}),
     ...(payload.content !== undefined ? { content: payload.content } : {}),
     ...(payload.categories !== undefined
@@ -567,8 +667,11 @@ function localUpdateNote(id, payload) {
       ? { attachments: Array.isArray(payload.attachments) ? payload.attachments : [] }
       : {}),
     ...(payload.reminder !== undefined ? { reminder: normalizeReminder(payload.reminder) } : {}),
+    ...(payload.pinned !== undefined ? { pinned: !!payload.pinned } : {}),
+    ...(payload.favorite !== undefined ? { favorite: !!payload.favorite } : {}),
+    ...(payload.pinnedAt !== undefined ? { pinnedAt: payload.pinnedAt } : pinnedAtPatch),
     updated_at: now,
-  };
+  });
   const next = [...state.notes];
   next[idx] = updated;
   saveNotes(next);
@@ -769,6 +872,65 @@ export async function markDueAsFired(nowIso) {
     saveNotes(next);
   }
   return firedIds;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Toggle the pinned state for a note. When pinning, sets pinnedAt to now.
+ */
+export async function togglePin(noteId) {
+  const state = ensureState();
+  const note = state.notes.find((n) => String(n.id) === String(noteId));
+  if (!note) throw new Error("Note not found");
+  const targetPinned = !note.pinned;
+  const nowIso = new Date().toISOString();
+
+  if (useApi) {
+    // PATCH stub for backend integration
+    try {
+      const res = await fetch(`${API_BASE}/notes/${noteId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ pinned: targetPinned, pinnedAt: targetPinned ? nowIso : null }),
+      });
+      if (!res.ok) throw new Error(`Failed to patch pin: ${res.status}`);
+      const updated = await res.json();
+      return localUpdateNote(noteId, normalizeNoteBooleans(updated));
+    } catch (e) {
+      console.warn("Pin PATCH failed or unsupported, applying locally:", e.message);
+    }
+  }
+
+  return localUpdateNote(noteId, { pinned: targetPinned, pinnedAt: targetPinned ? nowIso : null });
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Toggle the favorite state for a note.
+ */
+export async function toggleFavorite(noteId) {
+  const state = ensureState();
+  const note = state.notes.find((n) => String(n.id) === String(noteId));
+  if (!note) throw new Error("Note not found");
+  const targetFavorite = !note.favorite;
+
+  if (useApi) {
+    // PATCH stub for backend integration
+    try {
+      const res = await fetch(`${API_BASE}/notes/${noteId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ favorite: targetFavorite }),
+      });
+      if (!res.ok) throw new Error(`Failed to patch favorite: ${res.status}`);
+      const updated = await res.json();
+      return localUpdateNote(noteId, normalizeNoteBooleans(updated));
+    } catch (e) {
+      console.warn("Favorite PATCH failed or unsupported, applying locally:", e.message);
+    }
+  }
+
+  return localUpdateNote(noteId, { favorite: targetFavorite });
 }
 
 export const _internal = {

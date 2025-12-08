@@ -264,6 +264,25 @@ input[type="text"]:focus, textarea:focus, select:focus {
   gap: 8px;
 }
 
+/* Icon-like buttons for pin/favorite */
+.icon-btn {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.icon-btn:hover {
+  box-shadow: 0 0 0 3px rgba(232,122,65,0.12);
+  border-color: var(--brand);
+}
+.icon-btn.active {
+  background: rgba(232,122,65,0.12);
+  border-color: var(--brand);
+}
+
 /* Category chips */
 .note-categories {
   display: flex;

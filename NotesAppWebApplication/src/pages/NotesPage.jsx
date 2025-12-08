@@ -17,6 +17,8 @@ import {
   markDueAsFired,
   dismissReminder,
   snoozeReminder,
+  togglePin,
+  toggleFavorite,
 } from "../services/notesService";
 import "./notes.css";
 
@@ -50,6 +52,10 @@ export default function NotesPage() {
   const [sortBy, setSortBy] = useState(() => getParamOrDefault("sort", _internal.DEFAULT_SORT));
   const [selectedCategory, setSelectedCategory] = useState(() =>
     getParamOrDefault("cat", "all")
+  );
+  // pin/favorite filters: "all" | "pinned" | "favorites"
+  const [flagFilter, setFlagFilter] = useState(() =>
+    getParamOrDefault("flag", "all")
   );
   const [searchInput, setSearchInput] = useState(() => {
     const fromUrl = getParamOrDefault("q", "");
@@ -135,7 +141,7 @@ export default function NotesPage() {
 
   // Persist sort and category filter into URL and reload notes when changed
   useEffect(() => {
-    setUrlParams({ sort: sortBy, cat: selectedCategory, q: debouncedQuery });
+    setUrlParams({ sort: sortBy, cat: selectedCategory, q: debouncedQuery, flag: flagFilter });
     loadData({ sortBy, category: selectedCategory, query: debouncedQuery });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy, selectedCategory, debouncedQuery]);
@@ -867,13 +873,52 @@ export default function NotesPage() {
               </div>
             )}
 
+            {/* Flag filter toolbar */}
+            <div className="chip-row" role="toolbar" aria-label="Pinned/Favorites filter">
+              <button
+                type="button"
+                className={`chip chip-action ${flagFilter === "all" ? "active" : ""}`}
+                onClick={() => setFlagFilter("all")}
+                aria-pressed={flagFilter === "all"}
+                title="Show all notes"
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className={`chip chip-action ${flagFilter === "pinned" ? "active" : ""}`}
+                onClick={() => setFlagFilter("pinned")}
+                aria-pressed={flagFilter === "pinned"}
+                title="Show pinned notes"
+              >
+                📌 Pinned
+              </button>
+              <button
+                type="button"
+                className={`chip chip-action ${flagFilter === "favorites" ? "active" : ""}`}
+                onClick={() => setFlagFilter("favorites")}
+                aria-pressed={flagFilter === "favorites"}
+                title="Show favorite notes"
+              >
+                ★ Favorites
+              </button>
+            </div>
+
             {loading ? (
               <div className="muted">Loading…</div>
             ) : notes.length === 0 ? (
               <div className="muted">No notes. Try different filters or create one above.</div>
             ) : (
               <ul className="notes-list">
-                {notes.map((n) => (
+                {notes
+                  .filter((n) =>
+                    flagFilter === "all"
+                      ? true
+                      : flagFilter === "pinned"
+                      ? !!n.pinned
+                      : !!n.favorite
+                  )
+                  .map((n) => (
                   <li key={n.id} className="note-item">
                     <div className="note-meta">
                       <div
@@ -923,11 +968,40 @@ export default function NotesPage() {
                       {reminderChip(n)}
                     </div>
 
-                    <div className="note-actions">
+                    <div className="note-actions" style={{ gap: 6, flexWrap: "wrap" }}>
+                      <button
+                        className={`icon-btn ${n.pinned ? "active" : ""}`}
+                        onClick={async () => {
+                          try {
+                            await togglePin(n.id);
+                            await loadData({ sortBy, category: selectedCategory, query: debouncedQuery });
+                          } catch {}
+                        }}
+                        aria-label={n.pinned ? `Unpin note ${n.title}` : `Pin note ${n.title}`}
+                        title={n.pinned ? "Unpin" : "Pin"}
+                        type="button"
+                      >
+                        {n.pinned ? "📌 Unpin" : "📌 Pin"}
+                      </button>
+                      <button
+                        className={`icon-btn ${n.favorite ? "active" : ""}`}
+                        onClick={async () => {
+                          try {
+                            await toggleFavorite(n.id);
+                            await loadData({ sortBy, category: selectedCategory, query: debouncedQuery });
+                          } catch {}
+                        }}
+                        aria-label={n.favorite ? `Remove favorite from ${n.title}` : `Mark ${n.title} as favorite`}
+                        title={n.favorite ? "Unfavorite" : "Favorite"}
+                        type="button"
+                      >
+                        {n.favorite ? "★ Favorited" : "☆ Favorite"}
+                      </button>
                       <button
                         className="btn"
                         onClick={() => openEdit(n)}
                         aria-label={`Edit note ${n.title}`}
+                        type="button"
                       >
                         Edit
                       </button>
@@ -935,6 +1009,7 @@ export default function NotesPage() {
                         className="btn btn-danger"
                         onClick={() => setConfirmDeleteId(n.id)}
                         aria-label={`Delete note ${n.title}`}
+                        type="button"
                       >
                         Delete
                       </button>
@@ -1105,18 +1180,54 @@ export default function NotesPage() {
                 )}
               </div>
 
-              <div className="modal-actions">
-                <button type="button" className="btn" onClick={closeEdit}>
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn"
-                  disabled={savingEdit || !editTitle.trim() || !editContent.trim()}
-                  aria-disabled={savingEdit || !editTitle.trim() || !editContent.trim()}
-                >
-                  {savingEdit ? "Saving…" : "Save"}
-                </button>
+              <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className={`icon-btn ${editingNote?.pinned ? "active" : ""}`}
+                    onClick={async () => {
+                      try {
+                        await togglePin(editingNote.id);
+                        const refreshed = await listNotes({ sortBy, category: selectedCategory, query: debouncedQuery });
+                        setNotes(refreshed);
+                        setEditingNote((prev) => prev ? { ...prev, pinned: !prev.pinned, pinnedAt: !prev.pinned ? new Date().toISOString() : null } : prev);
+                      } catch {}
+                    }}
+                    aria-label={editingNote?.pinned ? "Unpin note" : "Pin note"}
+                    title={editingNote?.pinned ? "Unpin" : "Pin"}
+                  >
+                    {editingNote?.pinned ? "📌 Unpin" : "📌 Pin"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`icon-btn ${editingNote?.favorite ? "active" : ""}`}
+                    onClick={async () => {
+                      try {
+                        await toggleFavorite(editingNote.id);
+                        const refreshed = await listNotes({ sortBy, category: selectedCategory, query: debouncedQuery });
+                        setNotes(refreshed);
+                        setEditingNote((prev) => prev ? { ...prev, favorite: !prev.favorite } : prev);
+                      } catch {}
+                    }}
+                    aria-label={editingNote?.favorite ? "Unfavorite note" : "Favorite note"}
+                    title={editingNote?.favorite ? "Unfavorite" : "Favorite"}
+                  >
+                    {editingNote?.favorite ? "★ Favorited" : "☆ Favorite"}
+                  </button>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" className="btn" onClick={closeEdit}>
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn"
+                    disabled={savingEdit || !editTitle.trim() || !editContent.trim()}
+                    aria-disabled={savingEdit || !editTitle.trim() || !editContent.trim()}
+                  >
+                    {savingEdit ? "Saving…" : "Save"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
