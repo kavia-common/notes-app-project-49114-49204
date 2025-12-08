@@ -73,6 +73,7 @@ export default function NotesPage() {
   const [content, setContent] = useState("");
   const [newNoteCatsInput, setNewNoteCatsInput] = useState("");
   const [newNoteAttachments, setNewNoteAttachments] = useState([]); // local unsaved attachments (data URLs)
+  const [newBackgroundColor, setNewBackgroundColor] = useState(""); // hex or empty
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -151,6 +152,7 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editBackgroundColor, setEditBackgroundColor] = useState("");
 
   // Lock UI state
   const NOTELOCK_ENABLED = String(process.env.REACT_APP_NOTELOCK_ENABLED ?? "true") !== "false";
@@ -550,7 +552,7 @@ export default function NotesPage() {
     // snapshot throttled
     pushHistorySnapshot({ isEdit: false, reason: "input" });
     // schedule debounced autosave
-    autoSaveDebouncerRef.current?.({ title, content: safe });
+    autoSaveDebouncerRef.current?.({ title, content: safe, backgroundColor: newBackgroundColor || null });
     if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: safe });
     setAutoSaveStatus(isOnline() ? "saving" : "offline");
   }
@@ -1184,6 +1186,7 @@ export default function NotesPage() {
         categories: parsedNewNoteCategories,
         attachments: newNoteAttachments, // local mode persists
         reminder: reminderPayload,
+        backgroundColor: newBackgroundColor || null,
       });
       setNotes((prev) =>
         _internal.applySortFilter([note, ...prev], {
@@ -1199,6 +1202,7 @@ export default function NotesPage() {
       setReminderDate("");
       setReminderTime("");
       setReminderRepeat("none");
+      setNewBackgroundColor("");
       setFeedback({ type: "success", message: "Note created." });
       // Also show success toast for manual create
       showSaveSuccess("Note saved successfully");
@@ -1245,6 +1249,7 @@ export default function NotesPage() {
     resetHistory({ isEdit: true });
     setEditCatsInput(Array.isArray(note.categories) ? note.categories.join(", ") : "");
     setEditAttachments(Array.isArray(note.attachments) ? [...note.attachments] : []);
+    setEditBackgroundColor(note.backgroundColor || "");
     // preload reminder fields
     const r = note.reminder;
     if (r?.reminderAt) {
@@ -1272,6 +1277,7 @@ export default function NotesPage() {
     resetHistory({ isEdit: true });
     setEditCatsInput("");
     setEditAttachments([]);
+    setEditBackgroundColor("");
     setEditReminderDate("");
     setEditReminderTime("");
     setEditReminderRepeat("none");
@@ -1332,6 +1338,7 @@ export default function NotesPage() {
         categories: parsedEditCategories,
         attachments: editAttachments, // local mode only
         reminder: reminderPatch,
+        backgroundColor: editBackgroundColor || null,
       });
       // Optimistically update list with resort/filter
       setNotes((prev) => {
@@ -1394,6 +1401,29 @@ export default function NotesPage() {
     return "file";
   }
 
+  function hexToRgb(hex) {
+    const m = String(hex || "").trim().match(/^#?([a-f0-9]{6})$/i);
+    if (!m) return null;
+    const int = parseInt(m[1], 16);
+    return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
+  }
+  function getContrastYIQ(hex) {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return "dark";
+    const { r, g, b } = rgb;
+    const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+    return yiq >= 160 ? "dark" : "light"; // threshold tuned
+  }
+  function needsOverlay(hex) {
+    // Overlay for very saturated or very light backgrounds to improve legibility slightly
+    const rgb = hexToRgb(hex);
+    if (!rgb) return false;
+    const { r, g, b } = rgb;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const lum = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 255;
+    const sat = max === 0 ? 0 : (max - min) / max;
+    return lum > 0.92 || (lum < 0.08 && sat > 0.4);
+  }
   function fileToDataUrl(file) {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -1633,7 +1663,7 @@ export default function NotesPage() {
                       // duplicate check (debounced)
                       debouncedCheckCreateTitleRef.current?.({ value: v, notesList: notes });
                       // schedule autosave
-                      autoSaveDebouncerRef.current?.({ title: v, content });
+                      autoSaveDebouncerRef.current?.({ title: v, content, backgroundColor: newBackgroundColor || null });
                       if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: v, content });
                       setAutoSaveStatus(isOnline() ? "saving" : "offline");
                     }}
@@ -1707,7 +1737,8 @@ export default function NotesPage() {
                 {/* Contenteditable editor */}
                 <div
                   id="note-content"
-                  className="rte-editor"
+                  className={`rte-editor ${newBackgroundColor ? `text-${getContrastYIQ(newBackgroundColor)}` : ""} ${newBackgroundColor && needsOverlay(newBackgroundColor) ? "with-overlay" : ""}`}
+                  style={newBackgroundColor ? { backgroundColor: newBackgroundColor } : undefined}
                   role="textbox"
                   aria-multiline="true"
                   aria-label="Note content editor"
@@ -1718,6 +1749,59 @@ export default function NotesPage() {
                   data-placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
 
+              </div>
+              <div className="form-row">
+                <label htmlFor="note-color">Background color</label>
+                <div className="color-picker" role="group" aria-label="Background color">
+                  {["#fffbe6","#e6f7ff","#e6fffb","#f6ffed","#fff0f6","#f0f5ff","#fef2f2","#fef3c7"].map((c) => {
+                    const active = (newBackgroundColor || "") === c;
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        className={`color-swatch ${active ? "active" : ""}`}
+                        style={{ backgroundColor: c }}
+                        aria-label={`Set note color ${c}`}
+                        aria-pressed={active}
+                        onClick={() => {
+                          setNewBackgroundColor(c);
+                          // autosave payload update if in progress
+                          autoSaveDebouncerRef.current?.({ title, content, backgroundColor: c });
+                          if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content, backgroundColor: c });
+                          setAutoSaveStatus(isOnline() ? "saving" : "offline");
+                        }}
+                        title={c}
+                      />
+                    );
+                  })}
+                  <input
+                    id="note-color"
+                    type="color"
+                    value={newBackgroundColor || "#ffffff"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setNewBackgroundColor(v);
+                      autoSaveDebouncerRef.current?.({ title, content, backgroundColor: v });
+                      if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content, backgroundColor: v });
+                      setAutoSaveStatus(isOnline() ? "saving" : "offline");
+                    }}
+                    aria-label="Custom color"
+                    className="color-input"
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => {
+                      setNewBackgroundColor("");
+                      autoSaveDebouncerRef.current?.({ title, content, backgroundColor: null });
+                      if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content, backgroundColor: null });
+                      setAutoSaveStatus(isOnline() ? "saving" : "offline");
+                    }}
+                    title="Clear color"
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
               <div className="form-row">
                 <label htmlFor="note-categories">Categories (comma-separated)</label>
@@ -2039,7 +2123,11 @@ export default function NotesPage() {
                       : !!n.favorite
                   )
                   .map((n) => (
-                  <li key={n.id} className="note-item">
+                  <li
+                    key={n.id}
+                    className={`note-item ${n.backgroundColor ? `text-${getContrastYIQ(n.backgroundColor)}` : ""} ${n.backgroundColor && needsOverlay(n.backgroundColor) ? "with-overlay" : ""}`}
+                    style={n.backgroundColor ? { backgroundColor: n.backgroundColor } : undefined}
+                  >
                     <div className="note-meta">
                       <div className="note-title">
                         <span
@@ -2237,13 +2325,14 @@ export default function NotesPage() {
         maxLength={quickAddMaxLength}
         successToast={showSaveSuccess}
         notes={notes}
-        onCreate={async ({ title: t, content: c }) => {
+        onCreate={async ({ title: t, content: c, backgroundColor: bg }) => {
           // Use existing notesService createNote; sanitize content is handled upstream and in component
           const note = await createNote({
             title: t || "",
             content: c || "",
             categories: [],
             attachments: [],
+            backgroundColor: bg || null,
           });
           // Insert at top and apply current sort/filter pipeline
           setNotes((prev) =>
@@ -2477,7 +2566,8 @@ export default function NotesPage() {
 
                 <div
                   id="edit-content"
-                  className="rte-editor"
+                  className={`rte-editor ${editBackgroundColor ? `text-${getContrastYIQ(editBackgroundColor)}` : ""} ${editBackgroundColor && needsOverlay(editBackgroundColor) ? "with-overlay" : ""}`}
+                  style={editBackgroundColor ? { backgroundColor: editBackgroundColor } : undefined}
                   role="textbox"
                   aria-multiline="true"
                   aria-label="Note content editor"
@@ -2487,6 +2577,42 @@ export default function NotesPage() {
                   onKeyDown={(e) => handleEditorKeyDown(e, true)}
                   data-placeholder={isListeningEdit ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
+              </div>
+              <div className="form-row">
+                <label htmlFor="edit-color">Background color</label>
+                <div className="color-picker" role="group" aria-label="Background color">
+                  {["#fffbe6","#e6f7ff","#e6fffb","#f6ffed","#fff0f6","#f0f5ff","#fef2f2","#fef3c7"].map((c) => {
+                    const active = (editBackgroundColor || "") === c;
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        className={`color-swatch ${active ? "active" : ""}`}
+                        style={{ backgroundColor: c }}
+                        aria-label={`Set note color ${c}`}
+                        aria-pressed={active}
+                        onClick={() => setEditBackgroundColor(c)}
+                        title={c}
+                      />
+                    );
+                  })}
+                  <input
+                    id="edit-color"
+                    type="color"
+                    value={editBackgroundColor || "#ffffff"}
+                    onChange={(e) => setEditBackgroundColor(e.target.value)}
+                    aria-label="Custom color"
+                    className="color-input"
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setEditBackgroundColor("")}
+                    title="Clear color"
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
               <div className="form-row">
                 <label htmlFor="edit-categories">Categories (comma-separated)</label>

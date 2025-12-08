@@ -43,6 +43,28 @@ Retention policy:
 - Click "Insert & Save" to embed the sketch (as a data URL image) in the note content and add it as an attachment for offline persistence and backup/export.
 - The component lives at src/components/HandwritingCanvas.jsx with minimal styles in src/components/handwriting.css.
 
+## Background Color per Note
+
+You can set a background color for each note. The selected color appears:
+- In the notes list card
+- In the editor canvas (Create/Edit)
+- In the Edit modal preview
+
+How to set:
+- Create form: use the “Background color” picker under the editor. Choose a preset swatch or set a custom color.
+- Edit dialog: use the same “Background color” picker.
+- Quick Add: an optional color picker is available before content.
+
+Persistence:
+- The color is saved with the note metadata (note.backgroundColor) and survives reloads and backups/exports.
+
+Accessibility:
+- The app automatically switches text color to maintain good contrast (light/dark text) and adds a subtle overlay for very light or saturated backgrounds to improve readability. Aim for colors that preserve contrast with text for best results.
+- If a chosen color leads to low contrast, consider a darker/lighter shade.
+
+Reset:
+- Use the “Clear” button in the color picker to remove the color.
+
 ## Quick Add Note (Popup)
 
 A lightweight popup for quickly creating short notes without leaving your current context.

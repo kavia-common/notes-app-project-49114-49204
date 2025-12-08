@@ -26,6 +26,7 @@ export default function QuickAddNote({
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [backgroundColor, setBackgroundColor] = useState("");
 
   // duplicate warning state
   const [dupWarn, setDupWarn] = useState({ isDup: false, msg: "" });
@@ -189,12 +190,14 @@ export default function QuickAddNote({
       const note = await onCreate({
         title: safeTitle || autoTitleFromContent(trimmed),
         content: safeContent,
+        backgroundColor: backgroundColor || null,
       });
       // Success path
       clearDraft();
       setTitle("");
       setContent("");
       if (successToast) successToast("Note saved successfully");
+      setBackgroundColor("");
       onClose && onClose();
       return note;
     } catch (err) {

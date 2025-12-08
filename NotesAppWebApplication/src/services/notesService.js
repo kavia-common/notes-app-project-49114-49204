@@ -158,6 +158,7 @@ function buildVersionFromNote(note, summary = "") {
       archived: !!note.archived,
       trashed: !!note.trashed,
       deletedAt: note.deletedAt || null,
+      backgroundColor: note.backgroundColor || null,
     },
   };
 }
@@ -203,6 +204,7 @@ export function summarizeChange(prev, next) {
   const prevRem = prev?.reminder ? { ...prev.reminder } : undefined;
   const nextRem = next?.reminder ? { ...next.reminder } : undefined;
   if (JSON.stringify(prevRem) !== JSON.stringify(nextRem)) changed.push("reminder");
+  if ((prev?.backgroundColor || null) !== (next?.backgroundColor || null)) changed.push("background");
   return changed.length ? changed.join(", ") : "no-op";
 }
 
@@ -528,6 +530,7 @@ export async function listNotes(options = {}) {
               categories: Array.isArray(n.categories) ? n.categories : [],
               attachments: Array.isArray(n.attachments) ? n.attachments : [],
               reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+              backgroundColor: n.backgroundColor || null,
             })
           )
         : [];
@@ -706,6 +709,7 @@ export async function createNote(note) {
       : [],
     trashed: false,
     deletedAt: null,
+    backgroundColor: note.backgroundColor || null,
     // attachments ignored for API create; handled by separate upload
   };
   const lockMetaInput = note.lockPin
@@ -778,6 +782,7 @@ export async function updateNote(id, note) {
     ...(sanitized.favorite !== undefined ? { favorite: !!sanitized.favorite } : {}),
     ...(sanitized.pinnedAt !== undefined ? { pinnedAt: sanitized.pinnedAt } : {}),
     ...(sanitized.archived !== undefined ? { archived: !!sanitized.archived } : {}),
+    ...(sanitized.backgroundColor !== undefined ? { backgroundColor: sanitized.backgroundColor || null } : {}),
   };
 
   if (NOTELOCK_ENABLED) {
@@ -950,6 +955,7 @@ export async function fetchNotes() {
             categories: Array.isArray(n.categories) ? n.categories : [],
             attachments: Array.isArray(n.attachments) ? n.attachments : [],
             reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+            backgroundColor: n.backgroundColor || null,
           })
         )
       : [];
@@ -1221,6 +1227,7 @@ function localUpdateNote(id, payload) {
       pinnedAt: prev.pinnedAt,
       trashed: prev.trashed,
       deletedAt: prev.deletedAt,
+      backgroundColor: prev.backgroundColor || null,
     },
     {
       title: tentative.title,
@@ -1234,6 +1241,7 @@ function localUpdateNote(id, payload) {
       pinnedAt: tentative.pinnedAt,
       trashed: tentative.trashed,
       deletedAt: tentative.deletedAt,
+      backgroundColor: tentative.backgroundColor || null,
     }
   );
 
