@@ -53,6 +53,31 @@ Retention policy:
 - Debounce interval can be configured via environment variable:
   - REACT_APP_AUTOSAVE_DEBOUNCE_MS (milliseconds, default 1000)
 
+## Rich-text formatting
+
+The editor supports lightweight inline formatting:
+
+- Bold, Italic, Underline
+- Inline code
+
+How to use:
+- Select text and click toolbar buttons above the editor.
+- Keyboard shortcuts:
+  - Ctrl/Cmd+B for Bold
+  - Ctrl/Cmd+I for Italic
+  - Ctrl/Cmd+U for Underline
+- Inline code: select text and click the </> button (wraps selection in a code style).
+
+Storage format:
+- Content is saved as sanitized HTML. The notes list and previews render this HTML so formatting appears in the snippet.
+
+Security:
+- HTML is sanitized on input and on render using DOMPurify to prevent XSS. Only the following inline tags are allowed: b, strong, i, em, u, code, br, p, div, span. No attributes are preserved.
+
+Tips:
+- Pasting rich text will be sanitized automatically.
+- The search highlight works on the sanitized HTML output.
+
 ## Development
 - npm install
 - npm start

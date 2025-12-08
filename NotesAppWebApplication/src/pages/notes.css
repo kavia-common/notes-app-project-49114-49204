@@ -285,6 +285,39 @@ input[type="text"]:focus, textarea:focus, select:focus {
   gap: 8px;
 }
 
+/* Rich-text editor */
+.rte-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.rte-editor {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 120px;
+  outline: none;
+  white-space: pre-wrap;
+}
+.rte-editor:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(232,122,65,0.15);
+}
+.rte-editor:empty:before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+}
+.rte-editor code {
+  background: rgba(107,114,128,0.18);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.95em;
+}
+
 /* Icon-like buttons for pin/favorite */
 .icon-btn {
   background: transparent;

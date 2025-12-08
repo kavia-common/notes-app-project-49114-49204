@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import DOMPurify from "dompurify";
 import {
   listNotes,
   listCategories,
@@ -130,6 +131,134 @@ export default function NotesPage() {
   // Voice dictation UI state
   const [isListeningCreate, setIsListeningCreate] = useState(false);
   const [isListeningEdit, setIsListeningEdit] = useState(false);
+
+  // Rich-text editor refs
+  const createEditorRef = useRef(null);
+  const editEditorRef = useRef(null);
+
+  // Initialize editor contents from state when opening/typing
+  useEffect(() => {
+    // Set sanitized HTML when content state changes (Create)
+    if (createEditorRef.current && typeof content === "string") {
+      // Avoid resetting caret if already same
+      const sanitized = sanitizeHtml(content);
+      if (createEditorRef.current.innerHTML !== sanitized) {
+        createEditorRef.current.innerHTML = sanitized || "";
+      }
+    }
+  }, [content]);
+
+  useEffect(() => {
+    // For Edit modal
+    if (editEditorRef.current && typeof editContent === "string") {
+      const sanitized = sanitizeHtml(editContent);
+      if (editEditorRef.current.innerHTML !== sanitized) {
+        editEditorRef.current.innerHTML = sanitized || "";
+      }
+    }
+  }, [editContent, editingNote]);
+
+  // Handle formatting buttons
+  function execFormat(cmd, isEditMode = false) {
+    try {
+      document.execCommand(cmd, false, null);
+    } catch {}
+    // Sync state after formatting
+    if (isEditMode) {
+      handleEditEditorInput();
+    } else {
+      handleCreateEditorInput();
+    }
+  }
+
+  // Inline code using <code> wrapper around selection
+  function wrapSelectionWithCode(isEditMode = false) {
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    // If selection inside code, toggle by unwrapping
+    const common = range.commonAncestorContainer;
+    const codeAncestor = findAncestorTag(common, "CODE");
+    if (codeAncestor) {
+      // unwrap
+      const parent = codeAncestor.parentNode;
+      while (codeAncestor.firstChild) parent.insertBefore(codeAncestor.firstChild, codeAncestor);
+      parent.removeChild(codeAncestor);
+    } else {
+      const code = document.createElement("code");
+      try {
+        range.surroundContents(code);
+      } catch {
+        // If can't surround (partial selection across nodes), fallback to execCommand
+        document.execCommand("insertHTML", false, `<code>${range.toString()}</code>`);
+      }
+    }
+    if (isEditMode) handleEditEditorInput();
+    else handleCreateEditorInput();
+  }
+
+  function findAncestorTag(node, tagName) {
+    let n = node?.nodeType === 1 ? node : node?.parentNode;
+    while (n) {
+      if (n.nodeType === 1 && n.tagName === tagName) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+
+  // Keyboard shortcuts
+  function handleEditorKeyDown(e, isEditMode = false) {
+    const isMac = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
+    const mod = isMac ? e.metaKey : e.ctrlKey;
+    if (mod) {
+      if (e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        execFormat("bold", isEditMode);
+      } else if (e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        execFormat("italic", isEditMode);
+      } else if (e.key.toLowerCase() === "u") {
+        e.preventDefault();
+        execFormat("underline", isEditMode);
+      }
+    }
+  }
+
+  // Editor input handlers sync innerHTML -> state with sanitization and autosave
+  function handleCreateEditorInput() {
+    if (!createEditorRef.current) return;
+    const raw = createEditorRef.current.innerHTML;
+    const safe = sanitizeHtml(raw);
+    setContent(safe);
+    autoSaveDebouncerRef.current?.({ title, content: safe });
+    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: safe });
+    setAutoSaveStatus(isOnline() ? "saving" : "offline");
+  }
+
+  function handleEditEditorInput() {
+    if (!editEditorRef.current) return;
+    const raw = editEditorRef.current.innerHTML;
+    const safe = sanitizeHtml(raw);
+    setEditContent(safe);
+  }
+
+  // HTML sanitization
+  function sanitizeHtml(html) {
+    try {
+      return DOMPurify.sanitize(String(html || ""), {
+        ALLOWED_TAGS: ["b", "strong", "i", "em", "u", "code", "br", "p", "div", "span"],
+        ALLOWED_ATTR: [],
+      });
+    } catch {
+      return String(html || "");
+    }
+  }
+
+  // Render with search highlight applied after sanitization
+  function renderNoteHtml(html, query) {
+    const safe = sanitizeHtml(html);
+    return applySearchHighlight(safe, query);
+  }
 
   // PUBLIC_INTERFACE
   const handleDictationTextCreate = useCallback(({ text, mode }) => {
@@ -1111,21 +1240,28 @@ export default function NotesPage() {
                   onQuickCreate={handleQuickCreateFromSpeech}
                 />
 
-                <textarea
+                {/* Rich text toolbar */}
+                <div className="rte-toolbar" role="toolbar" aria-label="Formatting">
+                  <button type="button" className="icon-btn" onClick={() => execFormat('bold')} title="Bold (Ctrl/Cmd+B)"><strong>B</strong></button>
+                  <button type="button" className="icon-btn" onClick={() => execFormat('italic')} title="Italic (Ctrl/Cmd+I)"><em>I</em></button>
+                  <button type="button" className="icon-btn" onClick={() => execFormat('underline')} title="Underline (Ctrl/Cmd+U)"><u>U</u></button>
+                  <button type="button" className="icon-btn" onClick={() => wrapSelectionWithCode()} title="Inline code (`)"><code>{`</>`}</code></button>
+                </div>
+
+                {/* Contenteditable editor */}
+                <div
                   id="note-content"
-                  rows="4"
-                  value={content}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setContent(v);
-                    autoSaveDebouncerRef.current?.({ title, content: v });
-                    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: v });
-                    setAutoSaveStatus(isOnline() ? "saving" : "offline");
-                  }}
-                  placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
-                  required
-                  aria-required="true"
+                  className="rte-editor"
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Note content editor"
+                  contentEditable
+                  ref={createEditorRef}
+                  onInput={handleCreateEditorInput}
+                  onKeyDown={handleEditorKeyDown}
+                  data-placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
+
               </div>
               <div className="form-row">
                 <label htmlFor="note-categories">Categories (comma-separated)</label>
@@ -1458,7 +1594,7 @@ export default function NotesPage() {
                     </div>
                     <div
                       className="note-content"
-                      dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.content, debouncedQuery) }}
+                      dangerouslySetInnerHTML={{ __html: renderNoteHtml(n.content, debouncedQuery) }}
                     />
 
                     {/* attachments listing */}
@@ -1742,14 +1878,25 @@ export default function NotesPage() {
                   onError={handleDictationError}
                 />
 
-                <textarea
+                {/* Rich text toolbar for Edit */}
+                <div className="rte-toolbar" role="toolbar" aria-label="Formatting">
+                  <button type="button" className="icon-btn" onClick={() => execFormat('bold', true)} title="Bold (Ctrl/Cmd+B)"><strong>B</strong></button>
+                  <button type="button" className="icon-btn" onClick={() => execFormat('italic', true)} title="Italic (Ctrl/Cmd+I)"><em>I</em></button>
+                  <button type="button" className="icon-btn" onClick={() => execFormat('underline', true)} title="Underline (Ctrl/Cmd+U)"><u>U</u></button>
+                  <button type="button" className="icon-btn" onClick={() => wrapSelectionWithCode(true)} title="Inline code (`)"><code>{`</>`}</code></button>
+                </div>
+
+                <div
                   id="edit-content"
-                  rows="4"
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  required
-                  aria-required="true"
-                  placeholder={isListeningEdit ? "Listening… speak now. Your words will appear here." : undefined}
+                  className="rte-editor"
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Note content editor"
+                  contentEditable
+                  ref={editEditorRef}
+                  onInput={handleEditEditorInput}
+                  onKeyDown={(e) => handleEditorKeyDown(e, true)}
+                  data-placeholder={isListeningEdit ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
               </div>
               <div className="form-row">
