@@ -26,6 +26,7 @@ import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
 import ConnectivityStatus from "../components/ConnectivityStatus";
 import HandwritingCanvas from "../components/HandwritingCanvas";
+import NoteCount from "../components/NoteCount";
 import {
   exportAllNotesAsTXT,
   exportAllNotesAsPDF,
@@ -1135,6 +1136,17 @@ export default function NotesPage() {
           <section className="card">
             <div className="toolbar toolbar-wrap">
               <h2 className="title" style={{ marginBottom: 0 }}>Your Notes</h2>
+              <NoteCount
+                notes={notes}
+                currentFilter={
+                  archivedMode === "archived"
+                    ? "archived"
+                    : archivedMode === "active"
+                    ? "active"
+                    : "all"
+                }
+                ariaLabelId="notes-counter-label"
+              />
               <div className="toolbar-right">
                 <div className="search-control">
                   <label htmlFor="search-notes" className="sr-only">Search notes</label>

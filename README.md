@@ -1,5 +1,9 @@
 # notes-app-project-49114-49204
 
+Update: Notes Counter
+- The Notes page now shows a live counter of total notes and filtered counts (Active/Archived) in the header toolbar.
+- Counts update automatically on create/edit/archive/trash/restore/delete and work offline via the local notes service.
+
 Update: Voice-to-Text Dictation
 - The web app now includes a voice-to-text feature using the browser Web Speech API.
 - See NotesAppWebApplication/README.md for usage instructions, browser support, and limitations.

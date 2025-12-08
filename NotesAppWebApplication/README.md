@@ -4,6 +4,7 @@ A simple notes app built with React that supports creating, editing, deleting, b
 
 ## Features
 - Create, edit, and delete notes
+- Live Notes Counter (total and filtered counts; updates on CRUD, archive, trash/restore, delete)
 - Full-text search on title/content
 - Backup to localStorage and restore
 - Export notes to JSON/TXT/PDF/ZIP
