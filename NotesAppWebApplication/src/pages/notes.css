@@ -313,6 +313,16 @@ input[type="text"]:focus, textarea:focus, select:focus {
   font-size: var(--fs-xs);
   color: var(--muted);
 }
+.last-updated {
+  font-size: 12px;
+  color: var(--muted);
+}
+.editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+}
 
 .note-content {
   white-space: pre-wrap;

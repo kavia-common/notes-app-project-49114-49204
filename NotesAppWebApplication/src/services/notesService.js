@@ -1260,6 +1260,12 @@ function localUpdateNote(id, payload) {
   next[idx] = updated;
   saveNotes(next);
 
+  // Announce updated time change for accessibility (caught in UI via document)
+  try {
+    const evt = new CustomEvent("note-updated-at", { detail: { id, updated_at: updated.updated_at } });
+    document.dispatchEvent(evt);
+  } catch {}
+
   // sync categories list if provided
   if (payload.categories) {
     saveCategoriesList([...(state.categories || []), ...payload.categories]);

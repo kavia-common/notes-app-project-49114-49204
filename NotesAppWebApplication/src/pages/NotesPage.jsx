@@ -26,6 +26,7 @@ import {
   relockNoteInSession,
   isNoteLocked,
 } from "../services/notesService";
+import { formatRelative, formatExact } from "../utils/time";
 import { debounce } from "../utils/debounce";
 import { hasDuplicateTitle, normalizeTitle } from "../utils/titleUtils";
 import { isOnline, subscribeConnectivity, backgroundSync } from "../services/offlineSyncService";
@@ -48,6 +49,7 @@ import {
   exportNoteAsPDF,
 } from "../services/exportService";
 import { VoiceInsertMode, appendWithSpace } from "../services/voiceToText";
+
 import {
   listBackups,
   getLatestBackupMeta,
@@ -64,6 +66,17 @@ import {
   diffNoteVersion,
   revertNoteToVersion,
 } from "../services/notesService";
+
+function LastUpdated({ value, className }) {
+  if (!value) return null;
+  const rel = formatRelative(value);
+  const exact = formatExact(value);
+  return (
+    <span className={className || "note-date"} title={exact} aria-label={`Last updated ${rel}, exact ${exact}`}>
+      Last updated: {rel}
+    </span>
+  );
+}
 
 // PUBLIC_INTERFACE
 export default function NotesPage() {
@@ -186,6 +199,18 @@ export default function NotesPage() {
   const [isListeningCreate, setIsListeningCreate] = useState(false);
   const [isListeningEdit, setIsListeningEdit] = useState(false);
 
+  useEffect(() => {
+    function onUpdated(ev) {
+      const { id, updated_at } = ev?.detail || {};
+      if (!updatedAtAriaRef.current) return;
+      const rel = formatRelative(updated_at);
+      const exact = formatExact(updated_at);
+      updatedAtAriaRef.current.textContent = `Note ${id} saved. Last updated ${rel}. Exact ${exact}`;
+    }
+    document.addEventListener("note-updated-at", onUpdated);
+    return () => document.removeEventListener("note-updated-at", onUpdated);
+  }, []);
+
   // Rich-text editor refs
   const createEditorRef = useRef(null);
   const editEditorRef = useRef(null);
@@ -198,8 +223,12 @@ export default function NotesPage() {
 
   // Undo/Redo ARIA live region
   const historyAriaRef = useRef(null);
+  const updatedAtAriaRef = useRef(null);
 
   // Internal history stacks for contenteditable editors
+
+  // Live region for last updated announcements
+  // Will receive messages when notes save and updated_at changes
   const HISTORY_MAX_DEPTH = 100;
   const HISTORY_SNAPSHOT_THROTTLE = 300;
 
@@ -1777,11 +1806,19 @@ export default function NotesPage() {
                   onKeyDown={handleEditorKeyDown}
                   data-placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
-                {/* Metrics footer for Create editor */}
-                <div className="editor-metrics" aria-label="Text metrics">
-                  <span className="metrics-text" title="Word and character count">
-                    {`${createMetrics.words} words • ${createMetrics.chars} characters`}
+                {/* Footer for Create editor: Last updated + metrics */}
+                <div className="editor-footer">
+                  <div aria-live="polite" aria-atomic="true" className="visually-hidden" ref={updatedAtAriaRef} />
+                  <span className="last-updated" title={formatExact(notes.find(n => String(n.id) === String(autoSavedNoteId))?.updated_at || "")}>
+                    {autoSavedNoteId
+                      ? `Last updated: ${formatRelative(notes.find(n => String(n.id) === String(autoSavedNoteId))?.updated_at)}`
+                      : ""}
                   </span>
+                  <div className="editor-metrics" aria-label="Text metrics">
+                    <span className="metrics-text" title="Word and character count">
+                      {`${createMetrics.words} words • ${createMetrics.chars} characters`}
+                    </span>
+                  </div>
                 </div>
               </div>
               <div className="form-row">
@@ -2171,7 +2208,9 @@ export default function NotesPage() {
                         {n.archived ? <span className="chip" style={{ marginLeft: 6 }}>Archived</span> : null}
                       </div>
                       <div className="note-date">
-                        {n.updated_at ? new Date(n.updated_at).toLocaleString() : ""}
+                        <span title={formatExact(n.updated_at || n.created_at) || ""}>
+                          Last updated: {formatRelative(n.updated_at || n.created_at)}
+                        </span>
                       </div>
                     </div>
                     <div className="note-content">
@@ -2613,13 +2652,18 @@ export default function NotesPage() {
                   onKeyDown={(e) => handleEditorKeyDown(e, true)}
                   data-placeholder={isListeningEdit ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
-                {/* Metrics footer for Edit editor */}
-                <div className="editor-metrics" aria-label="Text metrics">
-                  <span className="metrics-text" title="Word and character count">
-                    {editingNote && editingNote.lock?.isLocked && isNoteLocked(editingNote)
-                      ? "Locked"
-                      : `${editMetrics.words} words • ${editMetrics.chars} characters`}
+                {/* Footer for Edit editor: Last updated + metrics */}
+                <div className="editor-footer">
+                  <span className="last-updated" title={formatExact(editingNote?.updated_at || "")}>
+                    {editingNote?.updated_at ? `Last updated: ${formatRelative(editingNote.updated_at)}` : ""}
                   </span>
+                  <div className="editor-metrics" aria-label="Text metrics">
+                    <span className="metrics-text" title="Word and character count">
+                      {editingNote && editingNote.lock?.isLocked && isNoteLocked(editingNote)
+                        ? "Locked"
+                        : `${editMetrics.words} words • ${editMetrics.chars} characters`}
+                    </span>
+                  </div>
                 </div>
               </div>
               <div className="form-row">

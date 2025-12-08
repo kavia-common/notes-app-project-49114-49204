@@ -121,6 +121,23 @@ Configuration:
 - Debounce interval can be configured via environment variable:
   - REACT_APP_AUTOSAVE_DEBOUNCE_MS (milliseconds, default 1000)
 
+## Last Updated timestamps
+
+The app records and displays a “Last updated” time for each note.
+
+- Whenever a note is created or modified (autosave, quick add, formatting/color changes, reminder updates, and lock/unlock operations that change content), its updated_at field is set.
+- The Notes list and the editor footers show “Last updated: …” as a relative time, with a tooltip that shows the exact ISO time.
+
+Locked notes:
+- Locked notes still display the updated time but never expose note content until unlocked.
+
+Offline vs Server time:
+- Offline edits use local device time for updated_at and are persisted safely.
+- On the next successful save/sync, if the backend returns an authoritative timestamp, the UI replaces the local time with server time.
+
+Accessibility:
+- After saves complete, a polite ARIA-live message announces that the note was saved and when it was last updated.
+
 ## Save success feedback
 
 - After a successful save (auto-save or manual save), the app displays a small, non-intrusive success toast saying “Note saved successfully”.
