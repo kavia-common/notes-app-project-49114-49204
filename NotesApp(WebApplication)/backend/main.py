@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 
 # PUBLIC_INTERFACE
@@ -47,14 +47,23 @@ def create_app() -> FastAPI:
     NEXT_ID = {"value": 1}
 
     # PUBLIC_INTERFACE
-    @app.get("/healthz", tags=["health"], summary="Health check", description="Returns 200 OK if backend is healthy.")
-    def healthz():
+    @app.get(
+        "/healthz",
+        tags=["health"],
+        summary="Health check",
+        description="Returns 200 OK if backend is healthy.",
+        response_model=Dict[str, str],
+        responses={200: {"description": "Backend healthy", "content": {"application/json": {}}}},
+        operation_id="health_check",
+    )
+    def healthz() -> Dict[str, str]:
         """
         Health check endpoint.
 
         Returns:
             dict: A simple status message indicating health.
         """
+        # Return minimal JSON to avoid any serialization complexity
         return {"status": "ok"}
 
     # Namespaced API under /api to align with proxy configuration
@@ -140,4 +149,5 @@ if __name__ == "__main__":
     # Allow overriding backend port via env, default 5179 separate from Vite's default 3000.
     backend_port = int(os.getenv("BACKEND_PORT", "5179"))
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=backend_port, reload=True)
+    # Use the app object directly to avoid module path confusion under reload
+    uvicorn.run(app, host="0.0.0.0", port=backend_port, reload=True)
