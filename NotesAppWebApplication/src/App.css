@@ -28,6 +28,11 @@
   min-height: 100vh;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+}
 
 .App-logo {
   height: 40vmin;

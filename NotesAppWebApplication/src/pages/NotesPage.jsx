@@ -22,6 +22,7 @@ import {
 } from "../services/notesService";
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
+import ConnectivityStatus from "../components/ConnectivityStatus";
 import {
   exportAllNotesAsTXT,
   exportAllNotesAsPDF,
@@ -937,7 +938,7 @@ export default function NotesPage() {
   return (
     <div className="notes-app">
       <header className="navbar">
-        <div className="brand">Notes</div>
+        <div className="brand">Notes <ConnectivityStatus /></div>
       </header>
 
       <div className="layout">

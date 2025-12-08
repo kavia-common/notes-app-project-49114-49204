@@ -167,6 +167,23 @@ Common components include:
 - Navigation (`.navbar`)
 - Typography (`.title`, `.subtitle`, `.description`)
 
+## Offline Access and Sync
+
+The app supports offline-first usage:
+- Notes are cached locally using IndexedDB and are available when offline.
+- Create, edit, and delete while offline; changes are queued and synced when you reconnect.
+- Background sync runs automatically upon reconnection.
+- Conflict resolution: last-write-wins; a basic version history is kept internally (not yet surfaced in UI).
+
+Indicators:
+- Online/Offline status appears in the header.
+- Pending local changes are not explicitly listed yet but will sync in the background when connectivity returns.
+
+Limitations:
+- If the same note is edited on multiple devices while offline, the most recent update wins when syncing resumes.
+- Clearing browser storage will remove local cache and unsynced changes.
+- Version history fallback is internal only; no UI is provided to review conflicts.
+
 ## Learn More
 
 To learn React, check out the [React documentation](https://reactjs.org/).

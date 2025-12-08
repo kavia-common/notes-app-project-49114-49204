@@ -1,5 +1,6 @@
 //
 //
+//
 // Notes service: switches between API-backed and local in-memory storage
 // Adds categories/folders and sorting/filtering with local persistence and migration.
 // Adds attachments support with local data URL persistence and API stubs.
@@ -146,10 +147,7 @@ function ensureNoteVersions(note) {
   return note;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Create a human-readable summary of differences between two states.
- */
+// PUBLIC_INTERFACE
 export function summarizeChange(prev, next) {
   /** Returns a short string summary like "title, content, tags" for changed fields. */
   const changed = [];
@@ -165,7 +163,11 @@ export function summarizeChange(prev, next) {
   const nextPin = !!next?.pinned;
   if (prevPin !== nextPin || (prev?.pinnedAt || null) !== (next?.pinnedAt || null)) changed.push("pinned");
   const prevAtt = JSON.stringify(Array.isArray(prev?.attachments) ? prev.attachments.map(a => ({ name: a.name, size: a.size, mime: a.mime })) : []);
-  const nextAtt = JSON.stringify(Array.isArray(next?.attachments) ? next.attachments.map(a => ({ name: a.name, size: a.size, mime: a.mime })) : []);
+  const nextAtt = JSON.stringify(
+    Array.isArray(next?.attachments)
+      ? next.attachments.map((a) => ({ name: a.name, size: a.size, mime: a.mime }))
+      : []
+  );
   if (prevAtt !== nextAtt) changed.push("attachments");
   const prevRem = prev?.reminder ? { ...prev.reminder } : undefined;
   const nextRem = next?.reminder ? { ...next.reminder } : undefined;
@@ -173,10 +175,7 @@ export function summarizeChange(prev, next) {
   return changed.length ? changed.join(", ") : "no-op";
 }
 
-/**
- * PUBLIC_INTERFACE
- * Create a line-by-line diff between current and a version snapshot (for content).
- */
+// PUBLIC_INTERFACE
 export function diffTextLines(a = "", b = "") {
   /** Returns simple unified diff as array of {type:'same'|'add'|'del', text} per line. */
   const aLines = String(a).split("\n");
@@ -195,10 +194,7 @@ export function diffTextLines(a = "", b = "") {
   return out;
 }
 
-/**
- * PUBLIC_INTERFACE
- * List versions for a note by id (newest first).
- */
+// PUBLIC_INTERFACE
 export async function listNoteVersions(noteId) {
   const state = ensureState();
   const note = state.notes.find((n) => String(n.id) === String(noteId));
@@ -208,10 +204,7 @@ export async function listNoteVersions(noteId) {
   return [...note.versions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
-/**
- * PUBLIC_INTERFACE
- * Get a specific version snapshot by versionId.
- */
+// PUBLIC_INTERFACE
 export async function getNoteVersion(noteId, versionId) {
   const state = ensureState();
   const note = state.notes.find((n) => String(n.id) === String(noteId));
@@ -222,10 +215,7 @@ export async function getNoteVersion(noteId, versionId) {
   return v;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Compute diff of a selected version vs the current note.
- */
+// PUBLIC_INTERFACE
 export async function diffNoteVersion(noteId, versionId) {
   const state = ensureState();
   const note = state.notes.find((n) => String(n.id) === String(noteId));
@@ -239,10 +229,7 @@ export async function diffNoteVersion(noteId, versionId) {
   };
 }
 
-/**
- * PUBLIC_INTERFACE
- * Revert a note to a selected version (creates a new version snapshot of the current first).
- */
+// PUBLIC_INTERFACE
 export async function revertNoteToVersion(noteId, versionId) {
   const state = ensureState();
   const idx = state.notes.findIndex((n) => String(n.id) === String(noteId));
@@ -501,19 +488,12 @@ export async function listNotes(options = {}) {
   return applySortFilter(state.notes, options);
 }
 
-/**
- * PUBLIC_INTERFACE
- * Search helper that mirrors listNotes but emphasizes query param.
- */
+// PUBLIC_INTERFACE
 export async function searchNotes({ query, sortBy, category } = {}) {
   return listNotes({ query, sortBy, category });
 }
 
-/**
- * PUBLIC_INTERFACE
- * Return HTML string with <mark> wrapping matches (safe for simple highlighting).
- * Caller should render with dangerouslySetInnerHTML only for controlled content.
- */
+// PUBLIC_INTERFACE
 export function applySearchHighlight(text, query) {
   const s = String(text ?? "");
   const q = String(query ?? "").trim();
@@ -527,10 +507,7 @@ export function applySearchHighlight(text, query) {
   }
 }
 
-/**
- * PUBLIC_INTERFACE
- * Accessor for search query persistence key.
- */
+// PUBLIC_INTERFACE
 export const SEARCH_STORAGE_KEY = DEFAULT_SEARCH_LS_KEY;
 
 // PUBLIC_INTERFACE
@@ -578,7 +555,7 @@ export async function createNote(note) {
   });
 }
 
-/** PUBLIC_INTERFACE */
+// PUBLIC_INTERFACE
 export async function updateNote(id, note) {
   /**
    * Update a note by id with {title?, content?, categories?, attachments?, reminder?, pinned?, favorite?, pinnedAt?}; API if available, else local.
@@ -637,6 +614,29 @@ export async function deleteNote(id) {
     }
   }
   return localDeleteNote(id);
+}
+
+// PUBLIC_INTERFACE
+export async function fetchNotes() {
+  /** Fetch all notes; throws on HTTP error when API mode is on. Falls back to local state when API not configured. */
+  if (useApi) {
+    const res = await fetch(`${API_BASE}/notes`);
+    if (!res.ok) throw new Error("Failed to fetch notes");
+    const data = await res.json();
+    return Array.isArray(data)
+      ? data.map((n) =>
+          normalizeNoteBooleans({
+            ...n,
+            categories: Array.isArray(n.categories) ? n.categories : [],
+            attachments: Array.isArray(n.attachments) ? n.attachments : [],
+            reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+          })
+        )
+      : [];
+  }
+  // Local fallback: return stored notes
+  const state = ensureState();
+  return state.notes;
 }
 
 // PUBLIC_INTERFACE
@@ -913,10 +913,7 @@ function normalizeReminder(rem) {
   return out;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Set a reminder on a note. Validates that reminderAt is in the future.
- */
+// PUBLIC_INTERFACE
 export async function setReminder(noteId, reminder) {
   const norm = normalizeReminder(reminder);
   if (!norm?.reminderAt) {
@@ -946,10 +943,7 @@ export async function setReminder(noteId, reminder) {
   return localUpdateNote(noteId, { reminder: norm });
 }
 
-/**
- * PUBLIC_INTERFACE
- * Clear a reminder from a note.
- */
+// PUBLIC_INTERFACE
 export async function clearReminder(noteId) {
   if (useApi) {
     try {
@@ -964,11 +958,7 @@ export async function clearReminder(noteId) {
   return localUpdateNote(noteId, { reminder: undefined });
 }
 
-/**
- * PUBLIC_INTERFACE
- * List reminders that are due at or before passed time for local mode.
- * Returns array of { note, reminder }
- */
+// PUBLIC_INTERFACE
 export async function listDueReminders(nowIso) {
   const nowTs = nowIso ? new Date(nowIso).getTime() : Date.now();
   const state = ensureState();
@@ -984,10 +974,7 @@ export async function listDueReminders(nowIso) {
   return due;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Mark a reminder as dismissed.
- */
+// PUBLIC_INTERFACE
 export async function dismissReminder(noteId) {
   const state = ensureState();
   const idx = state.notes.findIndex((n) => String(n.id) === String(noteId));
@@ -1001,10 +988,7 @@ export async function dismissReminder(noteId) {
   return updated;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Snooze a reminder by minutes; updates reminderAt and sets status "snoozed".
- */
+// PUBLIC_INTERFACE
 export async function snoozeReminder(noteId, minutes = 5) {
   const state = ensureState();
   const idx = state.notes.findIndex((nn) => String(nn.id) === String(noteId));
@@ -1046,11 +1030,7 @@ function computeNextRepeat(reminder) {
   return null;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Mark reminders due as fired and advance repeated ones.
- * Returns list of note ids that were marked fired.
- */
+// PUBLIC_INTERFACE
 export async function markDueAsFired(nowIso) {
   const nowTs = nowIso ? new Date(nowIso).getTime() : Date.now();
   const state = ensureState();
@@ -1077,10 +1057,7 @@ export async function markDueAsFired(nowIso) {
   return firedIds;
 }
 
-/**
- * PUBLIC_INTERFACE
- * Toggle the pinned state for a note. When pinning, sets pinnedAt to now.
- */
+// PUBLIC_INTERFACE
 export async function togglePin(noteId) {
   const state = ensureState();
   const note = state.notes.find((n) => String(n.id) === String(noteId));
@@ -1107,10 +1084,7 @@ export async function togglePin(noteId) {
   return localUpdateNote(noteId, { pinned: targetPinned, pinnedAt: targetPinned ? nowIso : null });
 }
 
-/**
- * PUBLIC_INTERFACE
- * Toggle the favorite state for a note.
- */
+// PUBLIC_INTERFACE
 export async function toggleFavorite(noteId) {
   const state = ensureState();
   const note = state.notes.find((n) => String(n.id) === String(noteId));
