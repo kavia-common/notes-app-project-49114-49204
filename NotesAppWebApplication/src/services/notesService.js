@@ -52,6 +52,27 @@ export async function createNote(note) {
   return localCreateNote(payload);
 }
 
+/** PUBLIC_INTERFACE */
+export async function updateNote(id, note) {
+  /** Update a note by id with {title, content}; API if available, else local. */
+  const payload = { title: note.title, content: note.content };
+  if (useApi) {
+    try {
+      const res = await fetch(`${API_BASE}/notes/${id}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`Failed to update note: ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      console.warn("Falling back to local update due to API error:", e.message);
+      return localUpdateNote(id, payload);
+    }
+  }
+  return localUpdateNote(id, payload);
+}
+
 // PUBLIC_INTERFACE
 export async function deleteNote(id) {
   /** Delete note by id; API if available or local. */
@@ -115,6 +136,25 @@ function localDeleteNote(id) {
   const next = notes.filter((n) => String(n.id) !== String(id));
   writeLocal(next);
   return Promise.resolve(true);
+}
+
+function localUpdateNote(id, payload) {
+  const notes = readLocal();
+  const idx = notes.findIndex((n) => String(n.id) === String(id));
+  if (idx === -1) {
+    return Promise.reject(new Error("Note not found"));
+  }
+  const now = new Date().toISOString();
+  const updated = {
+    ...notes[idx],
+    title: payload.title,
+    content: payload.content,
+    updated_at: now,
+  };
+  const next = [...notes];
+  next[idx] = updated;
+  writeLocal(next);
+  return Promise.resolve(updated);
 }
 
 export const _internal = { useApi };
