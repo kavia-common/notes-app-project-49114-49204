@@ -113,6 +113,169 @@ function writeLocalState(state) {
   }
 }
 
+/**
+ * INTERNAL: Build a version snapshot from a note.
+ * We store minimal fields needed for restore/diff and a human-readable summary.
+ */
+function buildVersionFromNote(note, summary = "") {
+  const now = new Date().toISOString();
+  return {
+    versionId: `v_${now}_${Math.random().toString(36).slice(2, 8)}`,
+    created_at: now,
+    summary,
+    data: {
+      title: note.title || "",
+      content: note.content || "",
+      categories: Array.isArray(note.categories) ? [...note.categories] : [],
+      attachments: Array.isArray(note.attachments) ? [...note.attachments] : [],
+      reminder: note.reminder ? { ...note.reminder } : undefined,
+      pinned: !!note.pinned,
+      favorite: !!note.favorite,
+      pinnedAt: note.pinnedAt || null,
+    },
+  };
+}
+
+/**
+ * INTERNAL: Ensure note has versions array initialized.
+ */
+function ensureNoteVersions(note) {
+  if (!Array.isArray(note.versions)) {
+    note.versions = [];
+  }
+  return note;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Create a human-readable summary of differences between two states.
+ */
+export function summarizeChange(prev, next) {
+  /** Returns a short string summary like "title, content, tags" for changed fields. */
+  const changed = [];
+  if ((prev?.title || "") !== (next?.title || "")) changed.push("title");
+  if ((prev?.content || "") !== (next?.content || "")) changed.push("content");
+  const prevCats = JSON.stringify(Array.isArray(prev?.categories) ? [...prev.categories].sort() : []);
+  const nextCats = JSON.stringify(Array.isArray(next?.categories) ? [...next.categories].sort() : []);
+  if (prevCats !== nextCats) changed.push("categories");
+  const prevFav = !!prev?.favorite;
+  const nextFav = !!next?.favorite;
+  if (prevFav !== nextFav) changed.push("favorite");
+  const prevPin = !!prev?.pinned;
+  const nextPin = !!next?.pinned;
+  if (prevPin !== nextPin || (prev?.pinnedAt || null) !== (next?.pinnedAt || null)) changed.push("pinned");
+  const prevAtt = JSON.stringify(Array.isArray(prev?.attachments) ? prev.attachments.map(a => ({ name: a.name, size: a.size, mime: a.mime })) : []);
+  const nextAtt = JSON.stringify(Array.isArray(next?.attachments) ? next.attachments.map(a => ({ name: a.name, size: a.size, mime: a.mime })) : []);
+  if (prevAtt !== nextAtt) changed.push("attachments");
+  const prevRem = prev?.reminder ? { ...prev.reminder } : undefined;
+  const nextRem = next?.reminder ? { ...next.reminder } : undefined;
+  if (JSON.stringify(prevRem) !== JSON.stringify(nextRem)) changed.push("reminder");
+  return changed.length ? changed.join(", ") : "no-op";
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Create a line-by-line diff between current and a version snapshot (for content).
+ */
+export function diffTextLines(a = "", b = "") {
+  /** Returns simple unified diff as array of {type:'same'|'add'|'del', text} per line. */
+  const aLines = String(a).split("\n");
+  const bLines = String(b).split("\n");
+  const max = Math.max(aLines.length, bLines.length);
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    const la = aLines[i] ?? "";
+    const lb = bLines[i] ?? "";
+    if (la === lb) out.push({ type: "same", text: la });
+    else {
+      if (la !== "") out.push({ type: "del", text: la });
+      if (lb !== "") out.push({ type: "add", text: lb });
+    }
+  }
+  return out;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * List versions for a note by id (newest first).
+ */
+export async function listNoteVersions(noteId) {
+  const state = ensureState();
+  const note = state.notes.find((n) => String(n.id) === String(noteId));
+  if (!note) return [];
+  ensureNoteVersions(note);
+  // newest first
+  return [...note.versions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Get a specific version snapshot by versionId.
+ */
+export async function getNoteVersion(noteId, versionId) {
+  const state = ensureState();
+  const note = state.notes.find((n) => String(n.id) === String(noteId));
+  if (!note) throw new Error("Note not found");
+  ensureNoteVersions(note);
+  const v = note.versions.find((vv) => vv.versionId === versionId);
+  if (!v) throw new Error("Version not found");
+  return v;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Compute diff of a selected version vs the current note.
+ */
+export async function diffNoteVersion(noteId, versionId) {
+  const state = ensureState();
+  const note = state.notes.find((n) => String(n.id) === String(noteId));
+  if (!note) throw new Error("Note not found");
+  ensureNoteVersions(note);
+  const ver = note.versions.find((vv) => vv.versionId === versionId);
+  if (!ver) throw new Error("Version not found");
+  return {
+    titleChanged: (ver.data.title || "") !== (note.title || ""),
+    contentDiff: diffTextLines(ver.data.content || "", note.content || ""),
+  };
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Revert a note to a selected version (creates a new version snapshot of the current first).
+ */
+export async function revertNoteToVersion(noteId, versionId) {
+  const state = ensureState();
+  const idx = state.notes.findIndex((n) => String(n.id) === String(noteId));
+  if (idx === -1) throw new Error("Note not found");
+  const note = ensureNoteVersions(state.notes[idx]);
+
+  const selected = note.versions.find((vv) => vv.versionId === versionId);
+  if (!selected) throw new Error("Version not found");
+
+  // Create a version from current before reverting
+  const before = buildVersionFromNote(note, "manual revert checkpoint");
+  note.versions = [before, ...note.versions];
+
+  // Apply selected version data
+  const now = new Date().toISOString();
+  const reverted = normalizeNoteBooleans({
+    ...note,
+    title: selected.data.title,
+    content: selected.data.content,
+    categories: Array.isArray(selected.data.categories) ? selected.data.categories : [],
+    attachments: Array.isArray(selected.data.attachments) ? selected.data.attachments : [],
+    reminder: selected.data.reminder ? normalizeReminder(selected.data.reminder) : undefined,
+    pinned: !!selected.data.pinned,
+    favorite: !!selected.data.favorite,
+    pinnedAt: selected.data.pinnedAt || null,
+    updated_at: now,
+  });
+
+  state.notes[idx] = reverted;
+  writeLocalState(state);
+  return reverted;
+}
+
 function migrateIfNeeded() {
   try {
     if (localStorage.getItem(MIGRATION_FLAG)) return;
@@ -622,6 +785,7 @@ function localCreateNote(payload) {
     pinned: false,
     favorite: false,
     pinnedAt: null,
+    versions: [], // initialize versions history
   });
   const next = [newNote, ...state.notes];
   saveNotes(next);
@@ -646,7 +810,10 @@ function localUpdateNote(id, payload) {
     return Promise.reject(new Error("Note not found"));
   }
   const now = new Date().toISOString();
-  const prev = state.notes[idx];
+  const prevRaw = state.notes[idx];
+  const prev = ensureNoteVersions(prevRaw);
+
+  // compute next tentative state without updated_at to compare changes
   const pinnedIncoming = payload.pinned;
   let pinnedAtPatch = {};
   if (pinnedIncoming !== undefined) {
@@ -656,7 +823,7 @@ function localUpdateNote(id, payload) {
       pinnedAtPatch = { pinnedAt: null };
     }
   }
-  const updated = normalizeNoteBooleans({
+  const tentative = {
     ...prev,
     ...(payload.title !== undefined ? { title: payload.title } : {}),
     ...(payload.content !== undefined ? { content: payload.content } : {}),
@@ -670,11 +837,47 @@ function localUpdateNote(id, payload) {
     ...(payload.pinned !== undefined ? { pinned: !!payload.pinned } : {}),
     ...(payload.favorite !== undefined ? { favorite: !!payload.favorite } : {}),
     ...(payload.pinnedAt !== undefined ? { pinnedAt: payload.pinnedAt } : pinnedAtPatch),
+  };
+
+  // Determine if meaningful fields changed to create a version snapshot
+  const changedSummary = summarizeChange(
+    {
+      title: prev.title,
+      content: prev.content,
+      categories: prev.categories,
+      attachments: prev.attachments,
+      reminder: prev.reminder,
+      pinned: prev.pinned,
+      favorite: prev.favorite,
+      pinnedAt: prev.pinnedAt,
+    },
+    {
+      title: tentative.title,
+      content: tentative.content,
+      categories: tentative.categories,
+      attachments: tentative.attachments,
+      reminder: tentative.reminder,
+      pinned: tentative.pinned,
+      favorite: tentative.favorite,
+      pinnedAt: tentative.pinnedAt,
+    }
+  );
+
+  // Push previous version if there were changes
+  if (changedSummary && changedSummary !== "no-op") {
+    const version = buildVersionFromNote(prev, changedSummary);
+    prev.versions = [version, ...(Array.isArray(prev.versions) ? prev.versions : [])];
+  }
+
+  const updated = normalizeNoteBooleans({
+    ...tentative,
     updated_at: now,
   });
+
   const next = [...state.notes];
   next[idx] = updated;
   saveNotes(next);
+
   // sync categories list if provided
   if (payload.categories) {
     saveCategoriesList([...(state.categories || []), ...payload.categories]);

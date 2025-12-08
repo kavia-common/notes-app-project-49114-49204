@@ -31,6 +31,12 @@ import {
   exportLatestBackupToFile,
   importBackupFromFile,
 } from "../services/backupService";
+import {
+  listNoteVersions,
+  getNoteVersion,
+  diffNoteVersion,
+  revertNoteToVersion,
+} from "../services/notesService";
 
 // PUBLIC_INTERFACE
 export default function NotesPage() {
@@ -85,6 +91,14 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Versions UI state
+  const [showVersions, setShowVersions] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [selectedVersionId, setSelectedVersionId] = useState(null);
+  const [versionPreview, setVersionPreview] = useState(null); // snapshot data
+  const [versionDiff, setVersionDiff] = useState(null);
+  const [reverting, setReverting] = useState(false);
 
   // Backup & restore UI state
   const [backups, setBackups] = useState([]);
@@ -534,6 +548,24 @@ export default function NotesPage() {
     }
   }
 
+  async function loadVersions(noteId) {
+    try {
+      const list = await listNoteVersions(noteId);
+      setVersions(list);
+    } catch {
+      setVersions([]);
+    }
+  }
+
+  function resetVersionsUI() {
+    setShowVersions(false);
+    setVersions([]);
+    setSelectedVersionId(null);
+    setVersionPreview(null);
+    setVersionDiff(null);
+    setReverting(false);
+  }
+
   function openEdit(note) {
     setEditingNote(note);
     setEditTitle(note.title || "");
@@ -569,6 +601,7 @@ export default function NotesPage() {
     setEditReminderDate("");
     setEditReminderTime("");
     setEditReminderRepeat("none");
+    resetVersionsUI();
   }
 
   async function handleSaveEdit(e) {
@@ -1375,6 +1408,146 @@ export default function NotesPage() {
                   }
                 )}
               </div>
+
+              {/* Versions panel toggle */}
+              <div className="form-row">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={async () => {
+                    setShowVersions((v) => !v);
+                    if (!showVersions && editingNote) {
+                      await loadVersions(editingNote.id);
+                    }
+                  }}
+                  aria-expanded={showVersions}
+                  aria-controls="versions-panel"
+                >
+                  {showVersions ? "Hide Version History" : "Show Version History"}
+                </button>
+              </div>
+
+              {showVersions && (
+                <div id="versions-panel" className="versions-panel">
+                  <div className="versions-header">Version History</div>
+                  {versions.length === 0 ? (
+                    <div className="muted">No previous versions yet. Save edits to create versions.</div>
+                  ) : (
+                    <ul className="versions-list" role="list">
+                      {versions.map((v) => (
+                        <li key={v.versionId} className={`version-item ${selectedVersionId === v.versionId ? "active" : ""}`}>
+                          <div className="version-meta">
+                            <div className="version-title">
+                              {new Date(v.created_at).toLocaleString()}
+                            </div>
+                            <div className="version-summary muted">{v.summary || "changes"}</div>
+                          </div>
+                          <div className="version-actions">
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              onClick={async () => {
+                                setSelectedVersionId(v.versionId);
+                                try {
+                                  const snap = await getNoteVersion(editingNote.id, v.versionId);
+                                  setVersionPreview(snap);
+                                  const d = await diffNoteVersion(editingNote.id, v.versionId);
+                                  setVersionDiff(d);
+                                } catch {
+                                  setVersionPreview(null);
+                                  setVersionDiff(null);
+                                }
+                              }}
+                              aria-label="View diff"
+                              title="View diff"
+                            >
+                              View Diff
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-danger"
+                              onClick={async () => {
+                                if (!window.confirm("Revert to this version? Current state will be saved in history.")) return;
+                                try {
+                                  setReverting(true);
+                                  await revertNoteToVersion(editingNote.id, v.versionId);
+                                  // refresh UI states
+                                  await loadData();
+                                  await loadVersions(editingNote.id);
+                                  // update modal fields to reverted content
+                                  const noteNow = (await listNotes({ sortBy, category: selectedCategory, query: debouncedQuery }))
+                                    .find((n) => String(n.id) === String(editingNote.id));
+                                  if (noteNow) {
+                                    setEditTitle(noteNow.title || "");
+                                    setEditContent(noteNow.content || "");
+                                    setEditCatsInput(Array.isArray(noteNow.categories) ? noteNow.categories.join(", ") : "");
+                                    setEditAttachments(Array.isArray(noteNow.attachments) ? [...noteNow.attachments] : []);
+                                    const r = noteNow.reminder;
+                                    if (r?.reminderAt) {
+                                      const d = new Date(r.reminderAt);
+                                      if (!isNaN(d.getTime())) {
+                                        setEditReminderDate(d.toISOString().slice(0, 10));
+                                        const hh = String(d.getHours()).padStart(2, "0");
+                                        const mm = String(d.getMinutes()).padStart(2, "0");
+                                        setEditReminderTime(`${hh}:${mm}`);
+                                      } else {
+                                        setEditReminderDate("");
+                                        setEditReminderTime("");
+                                      }
+                                    } else {
+                                      setEditReminderDate("");
+                                      setEditReminderTime("");
+                                    }
+                                    setEditReminderRepeat(r?.repeat || "none");
+                                    setEditingNote(noteNow);
+                                  }
+                                  setFeedback({ type: "success", message: "Reverted to selected version." });
+                                  resetFeedbackSoon();
+                                } catch (e) {
+                                  setFeedback({ type: "error", message: e?.message || "Failed to revert." });
+                                  resetFeedbackSoon();
+                                } finally {
+                                  setReverting(false);
+                                }
+                              }}
+                              disabled={reverting}
+                              aria-disabled={reverting}
+                              title="Revert to this version"
+                            >
+                              {reverting ? "Reverting…" : "Revert"}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {versionPreview && versionDiff && (
+                    <div className="version-preview">
+                      <div className="version-preview-title">Selected Version vs Current</div>
+                      <div className="version-preview-section">
+                        <div className="version-field-label">Title:</div>
+                        <div className="version-field-value">
+                          <span className="muted">Version:</span> {versionPreview.data.title}
+                          <br />
+                          <span className="muted">Current:</span> {editingNote?.title}
+                        </div>
+                      </div>
+                      <div className="version-preview-section">
+                        <div className="version-field-label">Content diff:</div>
+                        <pre className="diff-block" aria-label="Content diff">
+                          {versionDiff.contentDiff.map((ln, i) => (
+                            <div key={i} className={`diff-line diff-${ln.type}`}>
+                              {ln.type === "add" ? "+ " : ln.type === "del" ? "- " : "  "}
+                              {ln.text}
+                            </div>
+                          ))}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="modal-actions" style={{ justifyContent: "space-between" }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
