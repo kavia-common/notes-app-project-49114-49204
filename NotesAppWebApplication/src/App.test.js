@@ -92,6 +92,41 @@ test("sort by title ascending and descending works", async () => {
   expect(itemsDesc[0]).toHaveTextContent("Bravo");
 });
 
+test("search filters notes by title, content and tags (case-insensitive)", async () => {
+  render(<App />);
+
+  // Create notes
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Travel Plans" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "Visit Japan" } });
+  fireEvent.change(screen.getByLabelText(/Categories \(comma-separated\)/i), { target: { value: "Leisure, Asia" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  await waitFor(() => expect(screen.getByText("Travel Plans")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Work Tasks" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "Finish report" } });
+  fireEvent.change(screen.getByLabelText(/Categories \(comma-separated\)/i), { target: { value: "Office" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  await waitFor(() => expect(screen.getByText("Work Tasks")).toBeInTheDocument());
+
+  // Search by content keyword
+  const search = screen.getByLabelText(/Search notes/i);
+  fireEvent.change(search, { target: { value: "japan" } });
+
+  await waitFor(() => {
+    const items = screen.getAllByRole("listitem");
+    expect(items.length).toBeGreaterThanOrEqual(1);
+    expect(items[0]).toHaveTextContent(/Travel Plans/i);
+  });
+
+  // Clear and search by tag
+  fireEvent.change(search, { target: { value: "asia" } });
+  await waitFor(() => {
+    const texts = screen.getAllByRole("listitem").map((li) => li.textContent || "");
+    expect(texts.some((t) => t.includes("Travel Plans"))).toBe(true);
+    expect(texts.some((t) => t.includes("Work Tasks"))).toBe(false);
+  });
+});
+
 test("category filtering shows only matching notes", async () => {
   render(<App />);
 

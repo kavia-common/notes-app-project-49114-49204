@@ -20,6 +20,7 @@ const headers = {
 
 // Types and defaults
 const DEFAULT_SORT = "updated_desc"; // updated_desc | updated_asc | created_desc | created_asc | title_asc | title_desc
+const DEFAULT_SEARCH_LS_KEY = "notes.search.query";
 
 /* ===== Local in-memory store with localStorage persistence ===== */
 const LS_KEY = "notes.mvp.list"; // legacy notes array
@@ -125,7 +126,7 @@ function nextId(notes) {
 }
 
 function applySortFilter(notes, options = {}) {
-  const { sortBy = DEFAULT_SORT, category } = options;
+  const { sortBy = DEFAULT_SORT, category, query } = options;
   let arr = Array.isArray(notes) ? [...notes] : [];
 
   // Category filter (single category selection)
@@ -133,6 +134,21 @@ function applySortFilter(notes, options = {}) {
     arr = arr.filter((n) =>
       Array.isArray(n.categories) ? n.categories.includes(category) : false
     );
+  }
+
+  // Text/tags search filter (case-insensitive, partial match)
+  if (query && String(query).trim()) {
+    const q = String(query).trim().toLowerCase();
+    arr = arr.filter((n) => {
+      const title = (n.title || "").toLowerCase();
+      const content = (n.content || "").toLowerCase();
+      const categories = Array.isArray(n.categories) ? n.categories.map((c) => (c || "").toLowerCase()) : [];
+      return (
+        title.includes(q) ||
+        content.includes(q) ||
+        categories.some((c) => c.includes(q))
+      );
+    });
   }
 
   // Sorting
@@ -166,22 +182,26 @@ function applySortFilter(notes, options = {}) {
 // PUBLIC_INTERFACE
 export async function listNotes(options = {}) {
   /**
-   * List notes with optional sort and category filter.
-   * options: { sortBy, category }
+   * List notes with optional sort, category filter and search query.
+   * options: { sortBy, category, query }
    * Uses API if available, else from local storage with migration support.
    */
   if (useApi) {
     try {
       const u = new URL(`${API_BASE}/notes`, window.location.origin);
-      // Optional: pass sort/filter as query (backend may ignore)
+      // Optional: pass sort/filter/search as query (backend may ignore)
       if (options.sortBy) u.searchParams.set("sortBy", options.sortBy);
       if (options.category && options.category !== "all")
         u.searchParams.set("category", options.category);
+      if (options.query && String(options.query).trim())
+        u.searchParams.set("q", String(options.query).trim());
+      // also pass tags derived from category if present
+      if (options.category && options.category !== "all")
+        u.searchParams.set("tags", options.category);
 
       const res = await fetch(u.toString().replace(window.location.origin, ""), { method: "GET" });
       if (!res.ok) throw new Error(`Failed to fetch notes: ${res.status}`);
       const data = await res.json();
-      // Ensure categories array exists per note for UI
       const normalized = Array.isArray(data)
         ? data.map((n) => ({ ...n, categories: Array.isArray(n.categories) ? n.categories : [] }))
         : [];
@@ -195,6 +215,38 @@ export async function listNotes(options = {}) {
   const state = ensureState();
   return applySortFilter(state.notes, options);
 }
+
+/**
+ * PUBLIC_INTERFACE
+ * Search helper that mirrors listNotes but emphasizes query param.
+ */
+export async function searchNotes({ query, sortBy, category } = {}) {
+  return listNotes({ query, sortBy, category });
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Return HTML string with <mark> wrapping matches (safe for simple highlighting).
+ * Caller should render with dangerouslySetInnerHTML only for controlled content.
+ */
+export function applySearchHighlight(text, query) {
+  const s = String(text ?? "");
+  const q = String(query ?? "").trim();
+  if (!q) return s;
+  try {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(escaped, "gi");
+    return s.replace(re, (m) => `<mark class="hl">${m}</mark>`);
+  } catch {
+    return s;
+  }
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Accessor for search query persistence key.
+ */
+export const SEARCH_STORAGE_KEY = DEFAULT_SEARCH_LS_KEY;
 
 // PUBLIC_INTERFACE
 export async function createNote(note) {

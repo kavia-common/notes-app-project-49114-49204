@@ -5,6 +5,9 @@ import {
   createNote,
   deleteNote,
   updateNote,
+  searchNotes,
+  applySearchHighlight,
+  SEARCH_STORAGE_KEY,
   _internal,
 } from "../services/notesService";
 import "./notes.css";
@@ -27,6 +30,16 @@ export default function NotesPage() {
   const [selectedCategory, setSelectedCategory] = useState(() =>
     getParamOrDefault("cat", "all")
   );
+  const [searchInput, setSearchInput] = useState(() => {
+    const fromUrl = getParamOrDefault("q", "");
+    if (fromUrl) return fromUrl;
+    try {
+      return localStorage.getItem(SEARCH_STORAGE_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
+  const [debouncedQuery, setDebouncedQuery] = useState(searchInput);
 
   // Edit modal state
   const [editingNote, setEditingNote] = useState(null);
@@ -67,7 +80,11 @@ export default function NotesPage() {
     setLoading(true);
     try {
       const [list, cats] = await Promise.all([
-        listNotes({ sortBy: options?.sortBy ?? sortBy, category: options?.category ?? selectedCategory }),
+        searchNotes({
+          sortBy: options?.sortBy ?? sortBy,
+          category: options?.category ?? selectedCategory,
+          query: options?.query ?? debouncedQuery,
+        }),
         listCategories(),
       ]);
       setNotes(Array.isArray(list) ? list : []);
@@ -93,10 +110,29 @@ export default function NotesPage() {
 
   // Persist sort and category filter into URL and reload notes when changed
   useEffect(() => {
-    setUrlParams({ sort: sortBy, cat: selectedCategory });
-    loadData({ sortBy, category: selectedCategory });
+    setUrlParams({ sort: sortBy, cat: selectedCategory, q: debouncedQuery });
+    loadData({ sortBy, category: selectedCategory, query: debouncedQuery });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy, selectedCategory]);
+  }, [sortBy, selectedCategory, debouncedQuery]);
+
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchInput), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Persist search to localStorage
+  useEffect(() => {
+    try {
+      if (searchInput?.trim()) {
+        localStorage.setItem(SEARCH_STORAGE_KEY, searchInput);
+      } else {
+        localStorage.removeItem(SEARCH_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }, [searchInput]);
 
   function resetFeedbackSoon() {
     window.clearTimeout(resetFeedbackSoon._t);
@@ -139,7 +175,13 @@ export default function NotesPage() {
         content: c,
         categories: parsedNewNoteCategories,
       });
-      setNotes((prev) => _internal.applySortFilter([note, ...prev], { sortBy, category: selectedCategory }));
+      setNotes((prev) =>
+        _internal.applySortFilter([note, ...prev], {
+          sortBy,
+          category: selectedCategory,
+          query: debouncedQuery,
+        })
+      );
       setTitle("");
       setContent("");
       setNewNoteCatsInput("");
@@ -192,7 +234,11 @@ export default function NotesPage() {
         const next = prev.map((n) =>
           String(n.id) === String(editingNote.id) ? { ...n, ...updated } : n
         );
-        return _internal.applySortFilter(next, { sortBy, category: selectedCategory });
+        return _internal.applySortFilter(next, {
+          sortBy,
+          category: selectedCategory,
+          query: debouncedQuery,
+        });
       });
       setFeedback({ type: "success", message: "Note updated." });
       resetFeedbackSoon();
@@ -344,22 +390,59 @@ export default function NotesPage() {
           </section>
 
           <section className="card">
-            <div className="toolbar">
+            <div className="toolbar toolbar-wrap">
               <h2 className="title" style={{ marginBottom: 0 }}>Your Notes</h2>
-              <div className="sort-control">
-                <label htmlFor="sort-select-2" className="sr-only">Sort notes</label>
-                <select
-                  id="sort-select-2"
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  aria-label="Sort notes"
-                >
-                  {sortOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+              <div className="toolbar-right">
+                <div className="search-control">
+                  <label htmlFor="search-notes" className="sr-only">Search notes</label>
+                  <input
+                    id="search-notes"
+                    type="search"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Search notes…"
+                    aria-label="Search notes"
+                  />
+                </div>
+                <div className="sort-control">
+                  <label htmlFor="sort-select-2" className="sr-only">Sort notes</label>
+                  <select
+                    id="sort-select-2"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    aria-label="Sort notes"
+                  >
+                    {sortOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
+
+            {debouncedQuery?.trim() && (
+              <div className="muted" style={{ marginBottom: 8 }}>
+                Showing results for “{debouncedQuery}”
+              </div>
+            )}
+
+            {Array.isArray(categories) && categories.length > 0 && (
+              <div className="chip-row" aria-label="Quick tag filters">
+                {categories.slice(0, 8).map((c) => (
+                  <button
+                    key={`chip-${c}`}
+                    type="button"
+                    className={`chip chip-action ${selectedCategory === c ? "active" : ""}`}
+                    onClick={() => setSelectedCategory(selectedCategory === c ? "all" : c)}
+                    aria-pressed={selectedCategory === c}
+                    aria-label={`Filter by tag ${c}`}
+                    title={`Filter by tag ${c}`}
+                  >
+                    #{c}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {loading ? (
               <div className="muted">Loading…</div>
@@ -370,12 +453,18 @@ export default function NotesPage() {
                 {notes.map((n) => (
                   <li key={n.id} className="note-item">
                     <div className="note-meta">
-                      <div className="note-title">{n.title}</div>
+                      <div
+                        className="note-title"
+                        dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.title, debouncedQuery) }}
+                      />
                       <div className="note-date">
                         {n.updated_at ? new Date(n.updated_at).toLocaleString() : ""}
                       </div>
                     </div>
-                    <div className="note-content">{n.content}</div>
+                    <div
+                      className="note-content"
+                      dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.content, debouncedQuery) }}
+                    />
                     {Array.isArray(n.categories) && n.categories.length > 0 && (
                       <div className="note-categories">
                         {n.categories.map((c) => (

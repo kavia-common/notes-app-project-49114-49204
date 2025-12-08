@@ -108,13 +108,52 @@ body { background: var(--bg-primary); color: var(--text-primary); }
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  gap: 8px;
 }
+.toolbar-wrap { flex-wrap: wrap; }
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-control input[type="search"] {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 12px;
+  min-width: 220px;
+}
+
 .sort-control select {
   background: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+/* highlight mark */
+mark.hl {
+  background: rgba(232,122,65,0.25);
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+/* interactive chips row */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.chip-action {
+  cursor: pointer;
+}
+.chip-action.active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(232,122,65,0.15);
 }
 
 .note-form .form-row {
