@@ -22,6 +22,8 @@ import {
   archiveNote,
   unarchiveNote,
 } from "../services/notesService";
+import { debounce } from "../utils/debounce";
+import { isOnline, subscribeConnectivity, backgroundSync } from "../services/offlineSyncService";
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
 import ConnectivityStatus from "../components/ConnectivityStatus";
@@ -66,6 +68,17 @@ export default function NotesPage() {
   const [feedback, setFeedback] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [creating, setCreating] = useState(false);
+
+  // Auto-save state for Create form
+  const [autoSaveStatus, setAutoSaveStatus] = useState(""); // "", "saving", "saved", "offline"
+  const [autoSavedNoteId, setAutoSavedNoteId] = useState(null); // after first create
+  const autoSaveDebouncerRef = useRef(null);
+  const autoSaveOnlineUnsubRef = useRef(null);
+  const DEBOUNCE_MS = (() => {
+    const raw = process.env.REACT_APP_AUTOSAVE_DEBOUNCE_MS;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 1000;
+  })();
 
   // Handwriting UI state
   const [showHandwriting, setShowHandwriting] = useState(false);
@@ -128,6 +141,111 @@ export default function NotesPage() {
       setContent((prev) => appendWithSpace(prev, text));
     }
   }, []);
+
+  // Auto-save debounced function for Create form
+  useEffect(() => {
+    // Define the actual save routine
+    async function performAutoSave(payload) {
+      const { title: t, content: c } = payload;
+      // validation: prevent empty notes being persisted
+      if (!t.trim() && !c.trim()) {
+        setAutoSaveStatus("");
+        return;
+      }
+
+      const nowPatch = { updated_at: new Date().toISOString() };
+
+      // If we already have an id, update; else create
+      try {
+        setAutoSaveStatus("saving");
+
+        // If offline or request likely to fail, cache and show offline
+        const online = isOnline();
+        if (!online) {
+          saveDraftToLocal(autoSavedNoteId, { ...payload, ...nowPatch });
+          setAutoSaveStatus("offline");
+          return;
+        }
+
+        if (autoSavedNoteId) {
+          const updated = await updateNote(autoSavedNoteId, { ...payload, ...nowPatch });
+          // Reflect latest updated_at in the list if present
+          setNotes((prev) =>
+            prev.map((n) => (String(n.id) === String(autoSavedNoteId) ? { ...n, ...updated } : n))
+          );
+          setAutoSaveStatus("saved");
+          clearDraftFromLocal(autoSavedNoteId);
+        } else {
+          // First create only when both have some content (title or content non-empty)
+          const created = await createNote({ ...payload });
+          setAutoSavedNoteId(created.id);
+          // Insert into list immediately so user sees it
+          setNotes((prev) =>
+            _internal.applySortFilter([created, ...prev], {
+              sortBy,
+              category: selectedCategory,
+              query: debouncedQuery,
+              archivedMode,
+            })
+          );
+          setAutoSaveStatus("saved");
+          clearDraftFromLocal(null);
+        }
+      } catch (e) {
+        // Network/server error -> cache offline and show offline status
+        saveDraftToLocal(autoSavedNoteId, { ...payload, ...nowPatch });
+        setAutoSaveStatus("offline");
+      }
+    }
+
+    autoSaveDebouncerRef.current = debounce(performAutoSave, DEBOUNCE_MS);
+
+    // Listen to online to retry sync of cached draft
+    autoSaveOnlineUnsubRef.current = subscribeConnectivity(async ({ online }) => {
+      if (!online) return;
+      // Try to sync cached draft if exists
+      const cached = readDraftFromLocal(autoSavedNoteId);
+      if (cached) {
+        try {
+          if (autoSavedNoteId) {
+            const updated = await updateNote(autoSavedNoteId, cached);
+            setNotes((prev) =>
+              prev.map((n) => (String(n.id) === String(autoSavedNoteId) ? { ...n, ...updated } : n))
+            );
+          } else if (cached.title?.trim() || cached.content?.trim()) {
+            const created = await createNote({ title: cached.title || "", content: cached.content || "" });
+            setAutoSavedNoteId(created.id);
+            setNotes((prev) =>
+              _internal.applySortFilter([created, ...prev], {
+                sortBy,
+                category: selectedCategory,
+                query: debouncedQuery,
+                archivedMode,
+              })
+            );
+          }
+          clearDraftFromLocal(autoSavedNoteId);
+          setAutoSaveStatus("saved");
+          await backgroundSync();
+        } catch {
+          // keep offline status; will retry later
+          setAutoSaveStatus("offline");
+        }
+      }
+    });
+
+    return () => {
+      // Flush best-effort before unmount
+      try {
+        autoSaveDebouncerRef.current?.flush?.();
+      } catch {}
+      autoSaveDebouncerRef.current?.cancel?.();
+      if (autoSaveOnlineUnsubRef.current) {
+        try { autoSaveOnlineUnsubRef.current(); } catch {}
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [DEBOUNCE_MS, autoSavedNoteId, sortBy, selectedCategory, debouncedQuery, archivedMode]);
 
   // PUBLIC_INTERFACE
   const handleDictationTextEdit = useCallback(({ text, mode }) => {
@@ -192,6 +310,35 @@ export default function NotesPage() {
       window.history.replaceState({}, "", u.toString());
     } catch {
       // no-op
+    }
+  }
+
+  // Auto-save draft cache keys
+  function getDraftKey(noteId) {
+    const idPart = noteId ? String(noteId) : "new";
+    return `autosave_note_${idPart}`;
+  }
+  function saveDraftToLocal(noteId, draft) {
+    try {
+      localStorage.setItem(getDraftKey(noteId), JSON.stringify(draft));
+    } catch {
+      // ignore quota errors
+    }
+  }
+  function readDraftFromLocal(noteId) {
+    try {
+      const raw = localStorage.getItem(getDraftKey(noteId));
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  function clearDraftFromLocal(noteId) {
+    try {
+      localStorage.removeItem(getDraftKey(noteId));
+    } catch {
+      // ignore
     }
   }
 
@@ -559,6 +706,11 @@ export default function NotesPage() {
       const cats = await listCategories();
       setCategories(cats);
       resetFeedbackSoon();
+      // clear autosave state for a fresh new note
+      try { autoSaveDebouncerRef.current?.cancel?.(); } catch {}
+      clearDraftFromLocal(autoSavedNoteId);
+      setAutoSavedNoteId(null);
+      setAutoSaveStatus("");
     } catch (e) {
       setFeedback({ type: "error", message: e?.message || "Failed to create note." });
       resetFeedbackSoon();
@@ -934,7 +1086,14 @@ export default function NotesPage() {
                   id="note-title"
                   type="text"
                   value={title}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTitle(v);
+                    // schedule autosave
+                    autoSaveDebouncerRef.current?.({ title: v, content });
+                    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: v, content });
+                    setAutoSaveStatus(isOnline() ? "saving" : "offline");
+                  }}
                   placeholder="Your note title"
                   required
                   aria-required="true"
@@ -956,7 +1115,13 @@ export default function NotesPage() {
                   id="note-content"
                   rows="4"
                   value={content}
-                  onChange={(e) => setContent(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setContent(v);
+                    autoSaveDebouncerRef.current?.({ title, content: v });
+                    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: v });
+                    setAutoSaveStatus(isOnline() ? "saving" : "offline");
+                  }}
                   placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
                   required
                   aria-required="true"
@@ -1037,6 +1202,29 @@ export default function NotesPage() {
               </div>
 
               <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className="muted"
+                  style={{ minWidth: 140 }}
+                  title={
+                    autoSaveStatus === "saving"
+                      ? "Saving…"
+                      : autoSaveStatus === "saved"
+                      ? "All changes saved"
+                      : autoSaveStatus === "offline"
+                      ? "Offline - changes will sync"
+                      : ""
+                  }
+                >
+                  {autoSaveStatus === "saving"
+                    ? "Saving…"
+                    : autoSaveStatus === "saved"
+                    ? "Saved"
+                    : autoSaveStatus === "offline"
+                    ? "Offline - changes will sync"
+                    : ""}
+                </span>
                 <button
                   type="button"
                   className="icon-btn"

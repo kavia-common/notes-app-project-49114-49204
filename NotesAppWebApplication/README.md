@@ -43,6 +43,16 @@ Retention policy:
 - Click "Insert & Save" to embed the sketch (as a data URL image) in the note content and add it as an attachment for offline persistence and backup/export.
 - The component lives at src/components/HandwritingCanvas.jsx with minimal styles in src/components/handwriting.css.
 
+## Auto-save
+
+- The editor automatically saves your note as you type using a debounced request (default 1000ms after you stop typing).
+- If the note has not been created yet, the first auto-save will create it; further edits will update the same note.
+- Status is shown inline near the editor: “Saving…”, “Saved”, or “Offline - changes will sync”.
+- Offline: When there’s no connectivity, your latest changes are cached locally (localStorage) under a key like `autosave_note_<id|new>` and retried when you come back online.
+- Validation: Completely empty notes (both title and content empty) are not saved.
+- Debounce interval can be configured via environment variable:
+  - REACT_APP_AUTOSAVE_DEBOUNCE_MS (milliseconds, default 1000)
+
 ## Development
 - npm install
 - npm start
