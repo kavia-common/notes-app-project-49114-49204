@@ -100,14 +100,17 @@ export default function QuickAddNote({
     try { localStorage.removeItem(DRAFT_KEY); } catch {}
   }, []);
 
-  // Close on Escape and trap focus
+  // Close on Escape and trap focus; handle undo/redo keys inside QuickAdd
   useEffect(() => {
     if (!isOpen) return;
 
     function onKeyDown(e) {
+      const isMac = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
+      const mod = isMac ? e.metaKey : e.ctrlKey;
       if (e.key === "Escape") {
         e.stopPropagation();
         handleClose();
+        return;
       } else if (e.key === "Tab") {
         // focus trap
         const focusable = getFocusable(modalRef.current);
@@ -124,6 +127,13 @@ export default function QuickAddNote({
             e.preventDefault();
             first.focus();
           }
+        }
+      }
+      // Undo/Redo within textarea: let native handle it but stop bubbling to page
+      if (mod) {
+        const k = e.key.toLowerCase();
+        if (k === "z" || k === "y") {
+          e.stopPropagation();
         }
       }
     }
@@ -241,6 +251,26 @@ export default function QuickAddNote({
           </div>
           <div className="form-row">
             <label htmlFor="quickadd-input-content">Content</label>
+            <div className="rte-toolbar" role="toolbar" aria-label="Quick content tools">
+              <button
+                type="button"
+                className="icon-btn small"
+                onClick={() => { try { document.execCommand && document.execCommand("undo"); } catch {} }}
+                title="Undo (Ctrl/Cmd+Z)"
+                aria-label="Undo (Ctrl/Cmd+Z)"
+              >
+                ↶ Undo
+              </button>
+              <button
+                type="button"
+                className="icon-btn small"
+                onClick={() => { try { document.execCommand && document.execCommand("redo"); } catch {} }}
+                title="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+                aria-label="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+              >
+                ↷ Redo
+              </button>
+            </div>
             <textarea
               id="quickadd-input-content"
               data-focus-first

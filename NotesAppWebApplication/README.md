@@ -132,6 +132,27 @@ Extending with custom templates (developers):
   - Keep HTML limited to allowed tags: b, strong, i, em, u, code, br, p, div, span.
 - The Template Picker automatically lists all entries in NOTE_TEMPLATES.
 
+## Undo / Redo
+
+Editors now support undo/redo with toolbar buttons and keyboard shortcuts.
+
+- Where available:
+  - Create editor (rich-text, contentEditable)
+  - Edit dialog editor (rich-text, contentEditable)
+  - Quick Add textarea (native browser history)
+- Toolbar:
+  - ↶ Undo and ↷ Redo buttons are in the editor toolbars. Buttons are disabled if no further undo/redo is available.
+  - Actions are announced via an ARIA live (polite) region for screen readers.
+- Shortcuts:
+  - Ctrl/Cmd + Z: Undo
+  - Ctrl/Cmd + Shift + Z: Redo
+  - Ctrl/Cmd + Y: Redo
+- Behavior:
+  - For contentEditable editors, the app prefers native browser undo/redo (execCommand/history) where available.
+  - If not available, the app maintains its own history stack with throttled snapshots (~300ms) capturing sanitized HTML and caret/selection positions. The max history depth is ~100.
+  - No-op changes are skipped, and snapshots are coalesced to avoid noisy states (e.g., template insert is recorded as a single step).
+  - Autosave does not trigger on every undo/redo keystroke. It schedules a debounced save once interactions settle, preserving performance.
+
 ## Rich-text formatting
 
 The editor supports lightweight inline formatting:

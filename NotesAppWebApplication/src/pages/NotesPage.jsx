@@ -187,14 +187,198 @@ export default function NotesPage() {
   const createEditorRef = useRef(null);
   const editEditorRef = useRef(null);
 
+  // Undo/Redo ARIA live region
+  const historyAriaRef = useRef(null);
+
+  // Internal history stacks for contenteditable editors
+  const HISTORY_MAX_DEPTH = 100;
+  const HISTORY_SNAPSHOT_THROTTLE = 300;
+
+  const createHistoryRef = useRef({ stack: [], index: -1, throttleT: null, lastHtml: "", lastSel: null });
+  const editHistoryRef = useRef({ stack: [], index: -1, throttleT: null, lastHtml: "", lastSel: null });
+
+  // Helpers to capture/apply selection relative to an editor root
+  function captureSelection(root) {
+    try {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const range = sel.getRangeAt(0);
+      if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+      // Create offsets via tree walker
+      const pre = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      let idx = 0, startIdx = 0, endIdx = 0, foundStart = false, foundEnd = false;
+      while (pre.nextNode()) {
+        const n = pre.currentNode;
+        if (!foundStart && n === range.startContainer) {
+          startIdx = idx + range.startOffset;
+          foundStart = true;
+        }
+        if (!foundEnd && n === range.endContainer) {
+          endIdx = idx + range.endOffset;
+          foundEnd = true;
+        }
+        idx += n.nodeValue.length;
+      }
+      return { start: startIdx, end: endIdx };
+    } catch {
+      return null;
+    }
+  }
+
+  function applySelection(root, selState) {
+    try {
+      if (!selState) return;
+      const { start, end } = selState;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      let idx = 0;
+      let startNode = null, startOffset = 0;
+      let endNode = null, endOffset = 0;
+      while (walker.nextNode()) {
+        const n = walker.currentNode;
+        const len = n.nodeValue.length;
+        if (!startNode && idx + len >= start) {
+          startNode = n;
+          startOffset = Math.max(0, start - idx);
+        }
+        if (!endNode && idx + len >= end) {
+          endNode = n;
+          endOffset = Math.max(0, end - idx);
+          break;
+        }
+        idx += len;
+      }
+      const range = document.createRange();
+      range.setStart(startNode || root, startNode ? startOffset : 0);
+      range.setEnd(endNode || root, endNode ? endOffset : 0);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch {
+      // ignore
+    }
+  }
+
+  function pushHistorySnapshot({ isEdit = false, reason = "" } = {}) {
+    const ref = isEdit ? editEditorRef : createEditorRef;
+    const hist = isEdit ? editHistoryRef.current : createHistoryRef.current;
+    if (!ref.current) return;
+    // throttle
+    if (hist.throttleT) window.clearTimeout(hist.throttleT);
+    hist.throttleT = window.setTimeout(() => {
+      try {
+        const raw = ref.current.innerHTML || "";
+        const safe = sanitizeHtml(raw);
+        const sel = captureSelection(ref.current);
+        if (safe === hist.lastHtml) return; // no-op
+        const entry = { html: safe, sel, reason, ts: Date.now() };
+        // Trim forward if we had undone
+        if (hist.index < hist.stack.length - 1) {
+          hist.stack = hist.stack.slice(0, hist.index + 1);
+        }
+        hist.stack.push(entry);
+        if (hist.stack.length > HISTORY_MAX_DEPTH) {
+          hist.stack.shift();
+        }
+        hist.index = hist.stack.length - 1;
+        hist.lastHtml = safe;
+        hist.lastSel = sel;
+      } catch {
+        // ignore
+      }
+    }, HISTORY_SNAPSHOT_THROTTLE);
+  }
+
+  function resetHistory({ isEdit = false }) {
+    const hist = isEdit ? editHistoryRef.current : createHistoryRef.current;
+    hist.stack = [];
+    hist.index = -1;
+    hist.lastHtml = "";
+    hist.lastSel = null;
+    if (hist.throttleT) {
+      clearTimeout(hist.throttleT);
+      hist.throttleT = null;
+    }
+  }
+
+  function nativeUndo() {
+    try {
+      return document.execCommand && document.execCommand("undo");
+    } catch {
+      return false;
+    }
+  }
+  function nativeRedo() {
+    try {
+      return document.execCommand && document.execCommand("redo");
+    } catch {
+      return false;
+    }
+  }
+
+  function performUndo({ isEdit = false } = {}) {
+    const ref = isEdit ? editEditorRef : createEditorRef;
+    const hist = isEdit ? editHistoryRef.current : createHistoryRef.current;
+    if (!ref.current) return;
+    // Try native first
+    const nativeOk = nativeUndo();
+    if (!nativeOk) {
+      if (hist.index <= 0) return;
+      hist.index -= 1;
+      const entry = hist.stack[hist.index];
+      ref.current.innerHTML = entry.html || "";
+      applySelection(ref.current, entry.sel);
+      // sync React state after applying history
+      if (isEdit) {
+        handleEditEditorInput();
+      } else {
+        handleCreateEditorInput();
+      }
+    }
+    if (historyAriaRef.current) historyAriaRef.current.textContent = "Undid last action.";
+    // Debounce autosave after undo settles
+    autoSaveDebouncerRef.current?.({ title, content: sanitizeHtml(createEditorRef.current?.innerHTML || content) });
+  }
+
+  function performRedo({ isEdit = false } = {}) {
+    const ref = isEdit ? editEditorRef : createEditorRef;
+    const hist = isEdit ? editHistoryRef.current : createHistoryRef.current;
+    if (!ref.current) return;
+    // Try native first
+    const nativeOk = nativeRedo();
+    if (!nativeOk) {
+      if (hist.index >= hist.stack.length - 1) return;
+      hist.index += 1;
+      const entry = hist.stack[hist.index];
+      ref.current.innerHTML = entry.html || "";
+      applySelection(ref.current, entry.sel);
+      if (isEdit) {
+        handleEditEditorInput();
+      } else {
+        handleCreateEditorInput();
+      }
+    }
+    if (historyAriaRef.current) historyAriaRef.current.textContent = "Redid last action.";
+    autoSaveDebouncerRef.current?.({ title, content: sanitizeHtml(createEditorRef.current?.innerHTML || content) });
+  }
+
+  function canUndo({ isEdit = false } = {}) {
+    const hist = isEdit ? editHistoryRef.current : createHistoryRef.current;
+    return hist.index > 0;
+  }
+  function canRedo({ isEdit = false } = {}) {
+    const hist = isEdit ? editHistoryRef.current : createHistoryRef.current;
+    return hist.index >= 0 && hist.index < hist.stack.length - 1;
+  }
+
   // Initialize editor contents from state when opening/typing
   useEffect(() => {
     // Set sanitized HTML when content state changes (Create)
     if (createEditorRef.current && typeof content === "string") {
-      // Avoid resetting caret if already same
       const sanitized = sanitizeHtml(content);
       if (createEditorRef.current.innerHTML !== sanitized) {
         createEditorRef.current.innerHTML = sanitized || "";
+        // Seed/Update history after programmatic changes if meaningful
+        pushHistorySnapshot({ isEdit: false, reason: "state-sync" });
       }
     }
   }, [content]);
@@ -205,6 +389,7 @@ export default function NotesPage() {
       const sanitized = sanitizeHtml(editContent);
       if (editEditorRef.current.innerHTML !== sanitized) {
         editEditorRef.current.innerHTML = sanitized || "";
+        pushHistorySnapshot({ isEdit: true, reason: "state-sync" });
       }
     }
   }, [editContent, editingNote]);
@@ -240,6 +425,8 @@ export default function NotesPage() {
     } else {
       handleCreateEditorInput();
     }
+    // Record a snapshot after insertion (single state)
+    pushHistorySnapshot({ isEdit, reason: "template-insert" });
 
     // place caret at top of inserted content (start of editor)
     try {
@@ -270,6 +457,7 @@ export default function NotesPage() {
     } else {
       handleCreateEditorInput();
     }
+    pushHistorySnapshot({ isEdit: isEditMode, reason: "format" });
   }
 
   // Inline code using <code> wrapper around selection
@@ -296,6 +484,7 @@ export default function NotesPage() {
     }
     if (isEditMode) handleEditEditorInput();
     else handleCreateEditorInput();
+    pushHistorySnapshot({ isEdit: isEditMode, reason: "code-wrap" });
   }
 
   function findAncestorTag(node, tagName) {
@@ -326,13 +515,26 @@ export default function NotesPage() {
     const isMac = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
     const mod = isMac ? e.metaKey : e.ctrlKey;
     if (mod) {
-      if (e.key.toLowerCase() === "b") {
+      const k = e.key.toLowerCase();
+      // Undo / Redo
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        performUndo({ isEdit: isEditMode });
+        return;
+      }
+      if ((k === "z" && e.shiftKey) || k === "y") {
+        e.preventDefault();
+        performRedo({ isEdit: isEditMode });
+        return;
+      }
+      // Formatting
+      if (k === "b") {
         e.preventDefault();
         execFormat("bold", isEditMode);
-      } else if (e.key.toLowerCase() === "i") {
+      } else if (k === "i") {
         e.preventDefault();
         execFormat("italic", isEditMode);
-      } else if (e.key.toLowerCase() === "u") {
+      } else if (k === "u") {
         e.preventDefault();
         execFormat("underline", isEditMode);
       }
@@ -345,6 +547,9 @@ export default function NotesPage() {
     const raw = createEditorRef.current.innerHTML;
     const safe = sanitizeHtml(raw);
     setContent(safe);
+    // snapshot throttled
+    pushHistorySnapshot({ isEdit: false, reason: "input" });
+    // schedule debounced autosave
     autoSaveDebouncerRef.current?.({ title, content: safe });
     if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: safe });
     setAutoSaveStatus(isOnline() ? "saving" : "offline");
@@ -355,6 +560,7 @@ export default function NotesPage() {
     const raw = editEditorRef.current.innerHTML;
     const safe = sanitizeHtml(raw);
     setEditContent(safe);
+    pushHistorySnapshot({ isEdit: true, reason: "input" });
   }
 
   // HTML sanitization
@@ -1005,6 +1211,7 @@ export default function NotesPage() {
       clearDraftFromLocal(autoSavedNoteId);
       setAutoSavedNoteId(null);
       setAutoSaveStatus("");
+      resetHistory({ isEdit: false });
     } catch (e) {
       setFeedback({ type: "error", message: e?.message || "Failed to create note." });
       resetFeedbackSoon();
@@ -1035,6 +1242,7 @@ export default function NotesPage() {
     setEditingNote(note);
     setEditTitle(note.title || "");
     setEditContent(note.content || "");
+    resetHistory({ isEdit: true });
     setEditCatsInput(Array.isArray(note.categories) ? note.categories.join(", ") : "");
     setEditAttachments(Array.isArray(note.attachments) ? [...note.attachments] : []);
     // preload reminder fields
@@ -1061,6 +1269,7 @@ export default function NotesPage() {
     setEditingNote(null);
     setEditTitle("");
     setEditContent("");
+    resetHistory({ isEdit: true });
     setEditCatsInput("");
     setEditAttachments([]);
     setEditReminderDate("");
@@ -1470,6 +1679,29 @@ export default function NotesPage() {
                   <button type="button" className="icon-btn" onClick={() => execFormat('italic')} title="Italic (Ctrl/Cmd+I)"><em>I</em></button>
                   <button type="button" className="icon-btn" onClick={() => execFormat('underline')} title="Underline (Ctrl/Cmd+U)"><u>U</u></button>
                   <button type="button" className="icon-btn" onClick={() => wrapSelectionWithCode()} title="Inline code (`)"><code>{`</>`}</code></button>
+                  <span aria-hidden="true" style={{ width: 8 }} />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => performUndo({ isEdit: false })}
+                    title="Undo (Ctrl/Cmd+Z)"
+                    aria-label="Undo (Ctrl/Cmd+Z)"
+                    disabled={!canUndo({ isEdit: false })}
+                    aria-disabled={!canUndo({ isEdit: false })}
+                  >
+                    ↶ Undo
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => performRedo({ isEdit: false })}
+                    title="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+                    aria-label="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+                    disabled={!canRedo({ isEdit: false })}
+                    aria-disabled={!canRedo({ isEdit: false })}
+                  >
+                    ↷ Redo
+                  </button>
                 </div>
 
                 {/* Contenteditable editor */}
@@ -2057,6 +2289,9 @@ export default function NotesPage() {
         onHide={hideSaveSuccess}
       />
 
+      {/* ARIA live region for history announcements */}
+      <div ref={historyAriaRef} className="visually-hidden" aria-live="polite" role="status" />
+
       {confirmDeleteId !== null && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">
@@ -2215,6 +2450,29 @@ export default function NotesPage() {
                   <button type="button" className="icon-btn" onClick={() => execFormat('italic', true)} title="Italic (Ctrl/Cmd+I)"><em>I</em></button>
                   <button type="button" className="icon-btn" onClick={() => execFormat('underline', true)} title="Underline (Ctrl/Cmd+U)"><u>U</u></button>
                   <button type="button" className="icon-btn" onClick={() => wrapSelectionWithCode(true)} title="Inline code (`)"><code>{`</>`}</code></button>
+                  <span aria-hidden="true" style={{ width: 8 }} />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => performUndo({ isEdit: true })}
+                    title="Undo (Ctrl/Cmd+Z)"
+                    aria-label="Undo (Ctrl/Cmd+Z)"
+                    disabled={!canUndo({ isEdit: true })}
+                    aria-disabled={!canUndo({ isEdit: true })}
+                  >
+                    ↶ Undo
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => performRedo({ isEdit: true })}
+                    title="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+                    aria-label="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+                    disabled={!canRedo({ isEdit: true })}
+                    aria-disabled={!canRedo({ isEdit: true })}
+                  >
+                    ↷ Redo
+                  </button>
                 </div>
 
                 <div
