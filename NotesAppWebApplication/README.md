@@ -20,14 +20,17 @@ Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
 ### `npm run dev`
 
-Alias for development with container-friendly host/port.\
-Respects environment variables:
-- HOST (default 0.0.0.0)
-- PORT or REACT_APP_PORT (default 3000)
+Alias for development with container-friendly host/port. Works with CRA and preview flags.
+
+Respects, in order of precedence:
+- CLI flags: `--port`, `--host` (e.g., `npm run dev -- --port 3000 --host 0.0.0.0`)
+- Environment variables: `PORT`, `HOST`
+- Fallbacks: `REACT_APP_PORT` for port, and `0.0.0.0` for host; default port 3000
 
 Examples:
 - HOST=0.0.0.0 PORT=3000 npm run dev
 - REACT_APP_PORT=3000 npm run dev
+- npm run dev -- --port 3000 --host 0.0.0.0
 
 ### `npm test`
 
