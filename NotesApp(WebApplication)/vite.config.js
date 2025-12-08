@@ -32,12 +32,24 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       allowedHosts,
       proxy: {
-        // Proxy backend health and API calls to FastAPI during development
-        '^/(healthz|api)(/.*)?$': {
+        // Explicitly proxy backend health and API calls to FastAPI during development
+        '/healthz': {
           target: `http://localhost:${backendPort}`,
           changeOrigin: true,
           secure: false,
-        }
+        },
+        '/api': {
+          target: `http://localhost:${backendPort}`,
+          changeOrigin: true,
+          secure: false,
+        },
+        // Websocket proxy (if backend uses ws under /ws)
+        '/ws': {
+          target: `ws://localhost:${backendPort}`,
+          ws: true,
+          changeOrigin: true,
+          secure: false,
+        },
       }
     },
     preview: {
@@ -49,15 +61,17 @@ export default defineConfig(({ mode }) => {
     define: {
       // PUBLIC_INTERFACE
       __APP_CONFIG__: JSON.stringify({
-        API_BASE: env.REACT_APP_API_BASE || '/api', // ensure relative path -> Vite proxy
-        BACKEND_URL: env.REACT_APP_BACKEND_URL || '', // Prefer relative path via proxy in dev
+        // Always prefer relative paths in development so Vite proxy is used
+        API_BASE: '/api',
+        // Ignore any absolute BACKEND_URL while running under Vite dev server
+        BACKEND_URL: '',
         FRONTEND_URL: env.REACT_APP_FRONTEND_URL || '',
-        WS_URL: env.REACT_APP_WS_URL || '',
+        WS_URL: '/ws',
         NODE_ENV: env.REACT_APP_NODE_ENV || 'development',
         ENABLE_SOURCE_MAPS: (env.REACT_APP_ENABLE_SOURCE_MAPS || 'true') === 'true',
         TRUST_PROXY: (env.REACT_APP_TRUST_PROXY || 'true') === 'true',
         LOG_LEVEL: env.REACT_APP_LOG_LEVEL || 'info',
-        HEALTHCHECK_PATH: env.REACT_APP_HEALTHCHECK_PATH || '/healthz',
+        HEALTHCHECK_PATH: '/healthz',
         FEATURE_FLAGS: env.REACT_APP_FEATURE_FLAGS || '{}',
         EXPERIMENTS_ENABLED: (env.REACT_APP_EXPERIMENTS_ENABLED || 'false') === 'true',
         PORT: port

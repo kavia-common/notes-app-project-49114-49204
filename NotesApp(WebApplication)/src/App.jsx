@@ -12,11 +12,9 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    // Prefer relative paths with Vite proxy in development
-    const healthPath = cfg.HEALTHCHECK_PATH || '/healthz';
-    const hasAbsoluteBackend = (cfg.BACKEND_URL || '').startsWith('http');
-    const base = hasAbsoluteBackend ? (cfg.BACKEND_URL || cfg.API_BASE || '') : '';
-    const url = base ? `${base}${healthPath}` : healthPath;
+    // Always use relative paths during Vite dev so proxy handles routing
+    const healthPath = '/healthz';
+    const url = healthPath;
 
     setDebugHealthUrl(url);
 

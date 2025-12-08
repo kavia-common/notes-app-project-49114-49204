@@ -8,7 +8,7 @@ Run locally:
 - Start both servers: npm run dev:all
   - Frontend: Vite on REACT_APP_PORT (default 3000)
   - Backend: FastAPI on BACKEND_PORT (default 5179)
-  - Vite proxies /healthz and /api/* to the backend.
+  - Vite proxies /healthz, /api/* and /ws to the backend.
 
 Alternative:
 - Start backend only: npm run dev:backend
