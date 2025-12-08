@@ -35,6 +35,13 @@ Retention policy:
 - Create, edit, archive, and delete while offline; changes are kept locally.
 - When a backend is introduced, queued changes can sync back (architecture ready).
 
+## Handwriting Canvas
+
+- Click "✍️ Handwriting" in the Create form to open a pressure-sensitive drawing canvas (supports mouse/touch/stylus).
+- Tools: Pen/Eraser, color, thickness, Undo/Redo, Clear.
+- Click "Insert & Save" to embed the sketch (as a data URL image) in the note content and add it as an attachment for offline persistence and backup/export.
+- The component lives at src/components/HandwritingCanvas.jsx with minimal styles in src/components/handwriting.css.
+
 ## Development
 - npm install
 - npm start

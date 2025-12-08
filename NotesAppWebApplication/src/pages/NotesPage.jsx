@@ -25,6 +25,7 @@ import {
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
 import ConnectivityStatus from "../components/ConnectivityStatus";
+import HandwritingCanvas from "../components/HandwritingCanvas";
 import {
   exportAllNotesAsTXT,
   exportAllNotesAsPDF,
@@ -64,6 +65,10 @@ export default function NotesPage() {
   const [feedback, setFeedback] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [creating, setCreating] = useState(false);
+
+  // Handwriting UI state
+  const [showHandwriting, setShowHandwriting] = useState(false);
+  const handwritingRef = useRef(null);
 
   // Reminders form state for create
   const [reminderDate, setReminderDate] = useState(""); // yyyy-mm-dd
@@ -1096,7 +1101,15 @@ export default function NotesPage() {
                 {renderAttachmentsPreview(newNoteAttachments, true, removeNewAttachment)}
               </div>
 
-              <div className="actions">
+              <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => setShowHandwriting(true)}
+                  title="Open handwriting canvas"
+                >
+                  ✍️ Handwriting
+                </button>
                 <button
                   ref={createSubmitRef}
                   className="btn"
@@ -1504,6 +1517,64 @@ export default function NotesPage() {
               <button className="btn btn-danger" onClick={handleRestoreLatestConfirmed} disabled={restoring} aria-disabled={restoring}>
                 {restoring ? "Restoring…" : "Restore"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showHandwriting && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowHandwriting(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">Handwriting</div>
+            <div className="form-row">
+              <HandwritingCanvas
+                ref={handwritingRef}
+                width={Math.min(900, typeof window !== "undefined" ? window.innerWidth - 80 : 600)}
+                height={400}
+                onChange={() => {}}
+              />
+            </div>
+            <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+              <div />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={async () => {
+                    if (!handwritingRef.current) return;
+                    try {
+                      const dataUrl = handwritingRef.current.getImageDataURL();
+                      if (!dataUrl) return;
+                      // 1) embed in content (markdown-like image)
+                      const embed = `\n![handwriting](${dataUrl})\n`;
+                      setContent((prev) => (prev || "") + embed);
+                      // 2) add to new attachments list for create form
+                      const now = new Date().toISOString();
+                      const name = `handwriting_${now.replace(/[:.]/g, "-")}.png`;
+                      setNewNoteAttachments((prev) => [
+                        {
+                          id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                          type: "image",
+                          name,
+                          size: Math.ceil((dataUrl.length * 3) / 4), // rough size estimate
+                          mime: "image/png",
+                          url: dataUrl,
+                          createdAt: now,
+                        },
+                        ...prev,
+                      ]);
+                      setShowHandwriting(false);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                >
+                  Insert & Save
+                </button>
+                <button type="button" className="btn btn-danger" onClick={() => setShowHandwriting(false)}>
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

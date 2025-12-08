@@ -1,0 +1,78 @@
+.handwriting-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.handwriting-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  background: #f3f4f6; /* gray-100 */
+  border: 1px solid #e5e7eb; /* gray-200 */
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.handwriting-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: #374151; /* gray-700 */
+}
+
+.handwriting-toolbar .color-picker input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.handwriting-toolbar .thickness-picker input[type="range"] {
+  vertical-align: middle;
+}
+
+.thickness-value {
+  display: inline-block;
+  min-width: 28px;
+  text-align: right;
+  color: #6b7280; /* gray-500 */
+}
+
+.hw-btn {
+  background: white;
+  border: 1px solid #d1d5db; /* gray-300 */
+  color: #111827; /* gray-900 */
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.hw-btn:hover {
+  background: #f9fafb;
+}
+
+.hw-btn.danger {
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fff7ed;
+}
+
+.handwriting-stage {
+  background: #ffffff;
+  border: 1px solid #e5e7eb; /* gray-200 */
+  border-radius: 8px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.handwriting-canvas {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  touch-action: none; /* Allow drawing with touch/pointer without scrolling */
+}

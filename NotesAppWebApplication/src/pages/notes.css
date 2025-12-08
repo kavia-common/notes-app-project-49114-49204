@@ -1,3 +1,5 @@
+@import "../components/handwriting.css";
+
 :root {
   --bg-primary: #ffffff;
   --bg-secondary: #f8f9fa;
