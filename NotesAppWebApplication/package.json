@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "dev": "cross-env HOST=${HOST:-0.0.0.0} PORT=${PORT:-${REACT_APP_PORT:-3000}} react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

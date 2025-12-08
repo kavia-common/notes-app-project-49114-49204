@@ -18,6 +18,17 @@ In the project directory, you can run:
 Runs the app in development mode.\
 Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
+### `npm run dev`
+
+Alias for development with container-friendly host/port.\
+Respects environment variables:
+- HOST (default 0.0.0.0)
+- PORT or REACT_APP_PORT (default 3000)
+
+Examples:
+- HOST=0.0.0.0 PORT=3000 npm run dev
+- REACT_APP_PORT=3000 npm run dev
+
 ### `npm test`
 
 Launches the test runner in interactive watch mode.
