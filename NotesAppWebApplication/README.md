@@ -157,6 +157,15 @@ Tips:
 - Pasting rich text will be sanitized automatically.
 - The search highlight works on the sanitized HTML output.
 
+## Text Size Preference
+
+- Use the "Text size" control in the toolbar to switch between Small, Medium, and Large text.
+- The selection applies across note previews, the editor, and reading views.
+- The choice is saved in your browser and restored on next visit.
+- Default can be overridden via environment variable:
+  - REACT_APP_DEFAULT_FONT_SIZE=small|medium|large
+- Implementation uses a data-font-size attribute on the document root with CSS variable scaling to avoid layout shifts and editor conflicts.
+
 ## Development
 - npm install
 - npm start

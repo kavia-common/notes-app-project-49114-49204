@@ -27,6 +27,10 @@ Templates
 - Built-in note templates (Meeting Notes, Daily Journal, To-Do List) are available in the UI.
 - See NotesAppWebApplication/README.md (Templates section) for details and how to add custom templates.
 
+Text Size
+- The web app supports Small/Medium/Large text size with persistence.
+- Configure default via REACT_APP_DEFAULT_FONT_SIZE (small|medium|large). See NotesAppWebApplication/README.md.
+
 Restore caveats
 - Restoring replaces current notes with the snapshot (last-write-wins).
 - Invalid or incompatible backups are rejected.

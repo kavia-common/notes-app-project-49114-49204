@@ -36,6 +36,7 @@ import HandwritingCanvas from "../components/HandwritingCanvas";
 import NoteCount from "../components/NoteCount";
 import SuccessToast from "../components/SuccessToast";
 import QuickAddNote from "../components/QuickAddNote";
+import FontSizeSelector from "../components/FontSizeSelector";
 import { NOTE_TEMPLATES, getTemplateById } from "../templates/templates";
 import {
   exportAllNotesAsTXT,
@@ -1631,6 +1632,7 @@ export default function NotesPage() {
                 ariaLabelId="notes-counter-label"
               />
               <div className="toolbar-right">
+                <FontSizeSelector />
                 <div className="search-control">
                   <label htmlFor="search-notes" className="sr-only">Search notes</label>
                   <input
