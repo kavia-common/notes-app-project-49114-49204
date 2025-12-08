@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import DOMPurify from "dompurify";
+import { debounce } from "../utils/debounce";
+import { hasDuplicateTitle } from "../utils/titleUtils";
 
 /**
  * PUBLIC_INTERFACE
@@ -18,16 +20,36 @@ export default function QuickAddNote({
   maxLength = getMaxLengthFromEnv(),
   successToast, // function to show existing success toast (optional)
   sanitize = defaultSanitize, // reuse existing sanitization
+  notes = [], // parent should pass current notes for duplicate checking
 }) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // duplicate warning state
+  const [dupWarn, setDupWarn] = useState({ isDup: false, msg: "" });
+  const debouncedCheckRef = useRef(null);
+  const ariaLiveRef = useRef(null);
   const titleRef = useRef(null);
   const modalRef = useRef(null);
   const lastActiveElementRef = useRef(null);
 
   const DRAFT_KEY = "quick_add_note_draft";
+
+  // setup debounced duplicate checker
+  useEffect(() => {
+    const fn = ({ value }) => {
+      const isDup = hasDuplicateTitle({ title: value, notes, excludeId: null });
+      const msg = isDup ? "Warning: A note with this title already exists." : "";
+      setDupWarn({ isDup, msg });
+      if (ariaLiveRef.current) ariaLiveRef.current.textContent = msg || "";
+    };
+    debouncedCheckRef.current = debounce(fn, 150);
+    return () => {
+      try { debouncedCheckRef.current?.cancel?.(); } catch {}
+    };
+  }, [notes]);
 
   // Load draft on open; focus first input; remember last active element
   useEffect(() => {
@@ -141,6 +163,14 @@ export default function QuickAddNote({
     e.preventDefault();
     if (saving) return;
     if (!validate()) return;
+
+    // Block on duplicate (final guard)
+    if (hasDuplicateTitle({ title: (title || "").trim(), notes, excludeId: null })) {
+      setDupWarn({ isDup: true, msg: "A note with this title already exists." });
+      if (ariaLiveRef.current) ariaLiveRef.current.textContent = "A note with this title already exists.";
+      setError("A note with this title already exists");
+      return;
+    }
     try {
       setSaving(true);
       const safeTitle = (title || "").trim();
@@ -182,18 +212,32 @@ export default function QuickAddNote({
         onClick={(e) => e.stopPropagation()}
         role="document"
       >
+        <div ref={ariaLiveRef} className="visually-hidden" aria-live="polite" role="status" />
         <div className="modal-header" id="quickadd-title">Quick Add Note</div>
         <form onSubmit={handleSubmit} aria-label="Quick add note form">
           <div className="form-row">
             <label htmlFor="quickadd-input-title">Title (optional)</label>
-            <input
-              id="quickadd-input-title"
-              type="text"
-              ref={titleRef}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Title (optional)"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                id="quickadd-input-title"
+                type="text"
+                ref={titleRef}
+                value={title}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setTitle(v);
+                  debouncedCheckRef.current?.({ value: v });
+                }}
+                placeholder="Title (optional)"
+                aria-describedby="quickadd-title-help"
+              />
+              {dupWarn.isDup ? (
+                <span className="chip" title="Duplicate title detected" aria-hidden="true">⚠️</span>
+              ) : null}
+            </div>
+            <div id="quickadd-title-help" className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              {dupWarn.isDup ? "A note with this title already exists." : " "}
+            </div>
           </div>
           <div className="form-row">
             <label htmlFor="quickadd-input-content">Content</label>
@@ -227,8 +271,8 @@ export default function QuickAddNote({
             <button
               type="submit"
               className="btn"
-              disabled={saving}
-              aria-disabled={saving}
+              disabled={saving || dupWarn.isDup}
+              aria-disabled={saving || dupWarn.isDup}
             >
               {saving ? "Saving…" : "Add"}
             </button>

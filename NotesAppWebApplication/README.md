@@ -71,6 +71,23 @@ Configuration:
   - REACT_APP_QUICK_ADD_MAX_LENGTH (default 280)
   - Legacy alias: REACT_APP_QUICK_ADD_CHAR_LIMIT
 
+## Duplicate title detection
+
+- The app warns when a note title matches an existing note’s title (case-insensitive, trimmed, and with collapsed whitespace by default).
+- Where it applies:
+  - Create form (real-time as you type): shows a subtle inline warning and a small warning badge; the Save button is disabled while a duplicate is present.
+  - Edit dialog: warns if you change the title to match another note’s title; your own note’s original title is allowed (the check excludes the same note by id).
+  - Quick Add popup: same inline warning and Save disable.
+- Autosave behavior:
+  - For a brand new note (create-on-first-save), autosave is skipped when the title is a duplicate.
+  - For edits, autosave is allowed when the duplicate refers to the same note id (i.e., no change) but would be blocked if it would conflict with a different note.
+- Accessibility:
+  - Warnings are also announced via an ARIA live (polite) region so screen readers are notified.
+- Configuration:
+  - REACT_APP_ALLOW_DUPLICATE_TITLES=false (default). Set to true to disable duplicate checking.
+  - REACT_APP_TITLE_MATCH_CASE_SENSITIVE=false (default). Set to true to make duplicate matching case-sensitive.
+  - You can also adjust the matching logic in src/utils/titleUtils.js if you prefer different normalization rules.
+
 ## Auto-save
 
 - The editor automatically saves your note as you type using a debounced request (default 1000ms after you stop typing).

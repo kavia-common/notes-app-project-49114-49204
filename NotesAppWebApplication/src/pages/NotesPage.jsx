@@ -24,6 +24,7 @@ import {
   unarchiveNote,
 } from "../services/notesService";
 import { debounce } from "../utils/debounce";
+import { hasDuplicateTitle, normalizeTitle } from "../utils/titleUtils";
 import { isOnline, subscribeConnectivity, backgroundSync } from "../services/offlineSyncService";
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
@@ -146,6 +147,15 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Duplicate title detection state
+  const [dupCreate, setDupCreate] = useState({ isDup: false, msg: "" });
+  const [dupEdit, setDupEdit] = useState({ isDup: false, msg: "" });
+  const ariaLiveRef = useRef(null);
+
+  // Debounced checkers
+  const debouncedCheckCreateTitleRef = useRef(null);
+  const debouncedCheckEditTitleRef = useRef(null);
 
   // Quick Add popup state
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -362,6 +372,29 @@ export default function NotesPage() {
     }
   }, []);
 
+  // Debounced duplicate checkers (mounted once)
+  useEffect(() => {
+    const checkCreate = ({ value, notesList }) => {
+      const isDup = hasDuplicateTitle({ title: value, notes: notesList, excludeId: null });
+      const msg = isDup ? "Warning: A note with this title already exists." : "";
+      setDupCreate({ isDup, msg });
+      // ARIA live polite
+      if (ariaLiveRef.current) ariaLiveRef.current.textContent = msg || "";
+    };
+    const checkEdit = ({ value, notesList, currentId }) => {
+      const isDup = hasDuplicateTitle({ title: value, notes: notesList, excludeId: currentId });
+      const msg = isDup ? "Warning: A note with this title already exists." : "";
+      setDupEdit({ isDup, msg });
+      if (ariaLiveRef.current) ariaLiveRef.current.textContent = msg || "";
+    };
+    debouncedCheckCreateTitleRef.current = debounce(checkCreate, 150);
+    debouncedCheckEditTitleRef.current = debounce(checkEdit, 150);
+    return () => {
+      try { debouncedCheckCreateTitleRef.current?.cancel?.(); } catch {}
+      try { debouncedCheckEditTitleRef.current?.cancel?.(); } catch {}
+    };
+  }, []);
+
   // Auto-save debounced function for Create form
   useEffect(() => {
     // Define the actual save routine
@@ -371,6 +404,15 @@ export default function NotesPage() {
       if (!t.trim() && !c.trim()) {
         setAutoSaveStatus("");
         return;
+      }
+
+      // Skip create-on-first-save if duplicate title detected for "new" note (no id yet)
+      if (!autoSavedNoteId) {
+        const dup = hasDuplicateTitle({ title: t, notes, excludeId: null });
+        if (dup) {
+          setAutoSaveStatus("");
+          return; // do not create or save while duplicate exists
+        }
       }
 
       const nowPatch = { updated_at: new Date().toISOString() };
@@ -884,6 +926,16 @@ export default function NotesPage() {
     e.preventDefault();
     const t = title.trim();
     const c = content.trim();
+
+    // Duplicate block
+    if (hasDuplicateTitle({ title: t, notes, excludeId: null })) {
+      setDupCreate({ isDup: true, msg: "A note with this title already exists." });
+      if (ariaLiveRef.current) ariaLiveRef.current.textContent = "A note with this title already exists.";
+      setFeedback({ type: "error", message: "A note with this title already exists" });
+      resetFeedbackSoon();
+      return;
+    }
+
     if (!t || !c) {
       setFeedback({ type: "error", message: "Title and content are required." });
       resetFeedbackSoon();
@@ -1008,6 +1060,16 @@ export default function NotesPage() {
     if (!editingNote) return;
     const t = editTitle.trim();
     const c = editContent.trim();
+
+    // Duplicate block (exclude same note id)
+    if (hasDuplicateTitle({ title: t, notes, excludeId: editingNote.id })) {
+      setDupEdit({ isDup: true, msg: "A note with this title already exists." });
+      if (ariaLiveRef.current) ariaLiveRef.current.textContent = "A note with this title already exists.";
+      setFeedback({ type: "error", message: "A note with this title already exists" });
+      resetFeedbackSoon();
+      return;
+    }
+
     if (!t || !c) {
       setFeedback({ type: "error", message: "Title and content are required." });
       resetFeedbackSoon();
@@ -1332,22 +1394,33 @@ export default function NotesPage() {
                   </select>
                 </div>
                 <label htmlFor="note-title">Title</label>
-                <input
-                  id="note-title"
-                  type="text"
-                  value={title}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setTitle(v);
-                    // schedule autosave
-                    autoSaveDebouncerRef.current?.({ title: v, content });
-                    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: v, content });
-                    setAutoSaveStatus(isOnline() ? "saving" : "offline");
-                  }}
-                  placeholder="Your note title"
-                  required
-                  aria-required="true"
-                />
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    id="note-title"
+                    type="text"
+                    value={title}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTitle(v);
+                      // duplicate check (debounced)
+                      debouncedCheckCreateTitleRef.current?.({ value: v, notesList: notes });
+                      // schedule autosave
+                      autoSaveDebouncerRef.current?.({ title: v, content });
+                      if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: v, content });
+                      setAutoSaveStatus(isOnline() ? "saving" : "offline");
+                    }}
+                    placeholder="Your note title"
+                    required
+                    aria-required="true"
+                    aria-describedby="create-title-help"
+                  />
+                  {dupCreate.isDup ? (
+                    <span className="chip" title="Duplicate title detected" aria-hidden="true">⚠️</span>
+                  ) : null}
+                </div>
+                <div id="create-title-help" className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  {dupCreate.isDup ? "A note with this title already exists." : " "}
+                </div>
               </div>
               <div className="form-row">
                 <label htmlFor="note-content">Content</label>
@@ -1494,8 +1567,8 @@ export default function NotesPage() {
                   ref={createSubmitRef}
                   className="btn"
                   type="submit"
-                  disabled={createDisabled}
-                  aria-disabled={createDisabled}
+                  disabled={createDisabled || dupCreate.isDup}
+                  aria-disabled={createDisabled || dupCreate.isDup}
                 >
                   {creating ? "Saving…" : "Save"}
                 </button>
@@ -1510,6 +1583,8 @@ export default function NotesPage() {
                 {feedback.message}
               </div>
             )}
+            {/* ARIA live region for duplicate title warnings */}
+            <div ref={ariaLiveRef} className="visually-hidden" aria-live="polite" role="status" />
           </section>
 
           <section className="card">
@@ -1881,6 +1956,7 @@ export default function NotesPage() {
         onClose={() => setQuickAddOpen(false)}
         maxLength={quickAddMaxLength}
         successToast={showSaveSuccess}
+        notes={notes}
         onCreate={async ({ title: t, content: c }) => {
           // Use existing notesService createNote; sanitize content is handled upstream and in component
           const note = await createNote({
@@ -2032,15 +2108,28 @@ export default function NotesPage() {
             <form onSubmit={handleSaveEdit} aria-label="Edit note form">
               <div className="form-row">
                 <label htmlFor="edit-title">Title</label>
-                <input
-                  id="edit-title"
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  required
-                  aria-required="true"
-                  autoFocus
-                />
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    id="edit-title"
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEditTitle(v);
+                      debouncedCheckEditTitleRef.current?.({ value: v, notesList: notes, currentId: editingNote?.id });
+                    }}
+                    required
+                    aria-required="true"
+                    autoFocus
+                    aria-describedby="edit-title-help"
+                  />
+                  {dupEdit.isDup ? (
+                    <span className="chip" title="Duplicate title detected" aria-hidden="true">⚠️</span>
+                  ) : null}
+                </div>
+                <div id="edit-title-help" className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  {dupEdit.isDup ? "A note with this title already exists." : " "}
+                </div>
               </div>
               <div className="form-row">
                 <label htmlFor="edit-content">Content</label>
