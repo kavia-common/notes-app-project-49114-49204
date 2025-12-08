@@ -11,6 +11,8 @@
 // IMPORTANT: This file is the public interface used by the app's pages/components.
 // PUBLIC_INTERFACE tags are added to exported functions for documentation visibility.
 
+import { generateSalt, deriveKeyFromPin, encrypt, decrypt, bytesToBase64, base64ToBytes } from "../utils/crypto";
+
 const API_BASE =
   process.env.REACT_APP_API_BASE ||
   process.env.REACT_APP_BACKEND_URL ||
@@ -519,7 +521,7 @@ export async function listNotes(options = {}) {
       const res = await fetch(u.toString().replace(window.location.origin, ""), { method: "GET" });
       if (!res.ok) throw new Error(`Failed to fetch notes: ${res.status}`);
       const data = await res.json();
-      const normalized = Array.isArray(data)
+      let normalized = Array.isArray(data)
         ? data.map((n) =>
             normalizeNoteBooleans({
               ...n,
@@ -529,15 +531,19 @@ export async function listNotes(options = {}) {
             })
           )
         : [];
-      return applySortFilter(normalized, options);
+      // Try decrypt for each
+      const decrypted = await Promise.all(normalized.map((n) => tryDecryptIfUnlocked(n)));
+      return applySortFilter(decrypted, options);
     } catch (e) {
       console.warn("Falling back to local notes due to API error:", e.message);
       const state = ensureState();
-      return applySortFilter(state.notes, options);
+      const decrypted = await Promise.all(state.notes.map((n) => tryDecryptIfUnlocked(n)));
+      return applySortFilter(decrypted, options);
     }
   }
   const state = ensureState();
-  return applySortFilter(state.notes, options);
+  const decrypted = await Promise.all(state.notes.map((n) => tryDecryptIfUnlocked(n)));
+  return applySortFilter(decrypted, options);
 }
 
 // PUBLIC_INTERFACE
@@ -583,14 +589,116 @@ export function applySearchHighlight(text, query) {
 // PUBLIC_INTERFACE
 export const SEARCH_STORAGE_KEY = DEFAULT_SEARCH_LS_KEY;
 
+// Note-lock feature flags and session handling
+const NOTELOCK_ENABLED = String(process.env.REACT_APP_NOTELOCK_ENABLED ?? "true") !== "false";
+const SESSION_TIMEOUT_MIN = Number(process.env.REACT_APP_NOTELOCK_SESSION_TIMEOUT || "15");
+const sessionUnlock = {
+  // id -> { keyPromise, unlockedAtMs }
+  _map: new Map(),
+  set(id, keyPromise) {
+    this._map.set(String(id), { keyPromise, unlockedAtMs: Date.now() });
+  },
+  get(id) {
+    const e = this._map.get(String(id));
+    if (!e) return null;
+    if (Date.now() - e.unlockedAtMs > SESSION_TIMEOUT_MIN * 60 * 1000) {
+      this._map.delete(String(id));
+      return null;
+    }
+    return e.keyPromise;
+  },
+  clear(id) { this._map.delete(String(id)); },
+  touch(id) {
+    const e = this._map.get(String(id));
+    if (e) e.unlockedAtMs = Date.now();
+  }
+};
+
+// Helpers to apply lock transformations
+async function maybeEncryptNoteBodyForSave(noteId, payload, lockMeta) {
+  if (!NOTELOCK_ENABLED) return payload;
+  if (!lockMeta?.isLocked || !lockMeta?.salt || !lockMeta?.cipher || !lockMeta?.iv) {
+    // If locking freshly: if lockMeta.pin is present we encrypt text now
+    if (lockMeta?.pin && (payload.content ?? "") !== "") {
+      const salt = await generateSalt(16);
+      const key = await deriveKeyFromPin(lockMeta.pin, salt);
+      const enc = await encrypt(payload.content || "", key);
+      return {
+        ...payload,
+        content: "", // do not store plaintext
+        lock: {
+          isLocked: true,
+          salt: bytesToBase64(salt),
+          iv: enc.iv,
+          cipher: enc.cipher,
+          lockHint: lockMeta.lockHint || "",
+          lockedAt: new Date().toISOString(),
+        },
+      };
+    }
+    return payload;
+  }
+  // Already locked; re-encrypt only if content is present (from editing)
+  if (typeof payload.content === "string" && payload.content !== "") {
+    // Must have an unlocked key in session to re-encrypt updates
+    const keyPromise = sessionUnlock.get(noteId);
+    if (!keyPromise) {
+      // cannot re-encrypt without key; keep existing encrypted content, drop provided content
+      const { content, ...rest } = payload;
+      return { ...rest };
+    }
+    const key = await keyPromise;
+    const enc = await encrypt(payload.content || "", key);
+    return {
+      ...payload,
+      content: "",
+      lock: {
+        isLocked: true,
+        salt: lockMeta.salt,
+        iv: enc.iv,
+        cipher: enc.cipher,
+        lockHint: lockMeta.lockHint || "",
+        lockedAt: lockMeta.lockedAt || new Date().toISOString(),
+      },
+    };
+  }
+  return payload;
+}
+
+function buildLockedPlaceholder(note) {
+  return {
+    ...note,
+    // Hide plaintext content for locked notes until unlocked
+    content: "\u{1F512} Locked",
+    _locked: true,
+  };
+}
+
+async function tryDecryptIfUnlocked(note) {
+  if (!NOTELOCK_ENABLED) return note;
+  const lk = note.lock;
+  if (!lk?.isLocked) return note;
+  const keyPromise = sessionUnlock.get(note.id);
+  if (!keyPromise) return buildLockedPlaceholder(note);
+  try {
+    const key = await keyPromise;
+    const text = await decrypt({ cipher: lk.cipher, iv: lk.iv }, key);
+    sessionUnlock.touch(note.id);
+    return { ...note, content: text, _locked: false };
+  } catch {
+    return buildLockedPlaceholder(note);
+  }
+}
+
 // PUBLIC_INTERFACE
 export async function createNote(note) {
   /**
    * Create a note (title, content, categories?: string[], attachments?: array).
    * Uses API if available, otherwise local.
    * Initializes trashed=false, deletedAt=null.
+   * Note lock: when note.lockPin is provided (4-digit string), content is encrypted client-side.
    */
-  const payload = {
+  const payloadBase = {
     title: note.title,
     content: note.content,
     categories: Array.isArray(note.categories)
@@ -600,6 +708,10 @@ export async function createNote(note) {
     deletedAt: null,
     // attachments ignored for API create; handled by separate upload
   };
+  const lockMetaInput = note.lockPin
+    ? { pin: String(note.lockPin), lockHint: note.lockHint || "" }
+    : null;
+  const payload = await maybeEncryptNoteBodyForSave("__new__", payloadBase, lockMetaInput);
   if (useApi) {
     try {
       const res = await fetch(`${API_BASE}/notes`, {
@@ -634,15 +746,23 @@ export async function createNote(note) {
 // PUBLIC_INTERFACE
 export async function updateNote(id, note) {
   /**
-   * Update a note by id with {title?, content?, categories?, attachments?, reminder?, pinned?, favorite?, pinnedAt?, archived?};
-   * API if available, else local.
-   * Trash fields are controlled via moveToTrash/restore; ignore direct override in generic update.
+   * Update a note by id with {title?, content?, categories?, attachments?, reminder?, pinned?, favorite?, pinnedAt?, archived?, lockPin?, removeLock?};
+   * - If lockPin provided, encrypt content and set lock metadata; stores ciphertext and clears plaintext.
+   * - If removeLock is true, remove lock details and save plaintext.
+   * - When already locked and content is changed while unlocked, content is re-encrypted using existing key (from session).
    */
   const sanitized = { ...note };
   delete sanitized.trashed;
   delete sanitized.deletedAt;
 
-  const payload = {
+  // Lock transformations
+  const state = ensureState();
+  const prev = state.notes.find((n) => String(n.id) === String(id));
+  const wasLocked = !!prev?.lock?.isLocked;
+  const applyLockIntent = NOTELOCK_ENABLED && (sanitized.lockPin || sanitized.removeLock);
+
+  // Prepare basic payload first
+  let payload = {
     ...(sanitized.title !== undefined ? { title: sanitized.title } : {}),
     ...(sanitized.content !== undefined ? { content: sanitized.content } : {}),
     ...(sanitized.categories !== undefined
@@ -659,6 +779,25 @@ export async function updateNote(id, note) {
     ...(sanitized.pinnedAt !== undefined ? { pinnedAt: sanitized.pinnedAt } : {}),
     ...(sanitized.archived !== undefined ? { archived: !!sanitized.archived } : {}),
   };
+
+  if (NOTELOCK_ENABLED) {
+    if (sanitized.removeLock === true && wasLocked) {
+      // Removing lock: requires note content to be provided as plaintext by the caller
+      sessionUnlock.clear(id);
+      payload = {
+        ...payload,
+        lock: undefined,
+        // content as provided (plaintext)
+      };
+    } else if (sanitized.lockPin) {
+      // Setting/changing lock now
+      sessionUnlock.clear(id);
+      payload = await maybeEncryptNoteBodyForSave(id, payload, { pin: String(sanitized.lockPin), lockHint: sanitized.lockHint || "" });
+    } else if (wasLocked) {
+      // Keep encrypted if no content change or re-encrypt when content changed
+      payload = await maybeEncryptNoteBodyForSave(id, payload, prev.lock);
+    }
+  }
   if (useApi) {
     try {
       const res = await fetch(`${API_BASE}/notes/${id}`, {
@@ -954,7 +1093,7 @@ function localCreateNote(payload) {
   const newNote = normalizeNoteBooleans({
     id: nextId(state.notes),
     title: payload.title,
-    content: payload.content,
+    content: payload.content || "",
     categories: Array.isArray(payload.categories) ? payload.categories : [],
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
     reminder: payload.reminder ? normalizeReminder(payload.reminder) : undefined,
@@ -968,6 +1107,17 @@ function localCreateNote(payload) {
     trashed: false,
     deletedAt: null,
   });
+  if (NOTELOCK_ENABLED && payload.lock?.isLocked) {
+    newNote.lock = {
+      isLocked: true,
+      salt: payload.lock.salt,
+      iv: payload.lock.iv,
+      cipher: payload.lock.cipher,
+      lockHint: payload.lock.lockHint || "",
+      lockedAt: payload.lock.lockedAt || now,
+    };
+    newNote.content = ""; // never store plaintext alongside cipher
+  }
   const next = [newNote, ...state.notes];
   saveNotes(next);
   // Update categories list with any new categories
@@ -1011,6 +1161,28 @@ function localUpdateNote(id, payload) {
     trashPatch.deletedAt = payload.trashed ? (payload.deletedAt || now) : null;
   }
 
+  // Apply lock metadata if any
+  let lockPatch = {};
+  if (NOTELOCK_ENABLED) {
+    if (payload.lock === undefined) {
+      // unchanged
+    } else if (!payload.lock) {
+      // remove lock
+      lockPatch = { lock: undefined };
+    } else if (payload.lock.isLocked) {
+      lockPatch = {
+        lock: {
+          isLocked: true,
+          salt: payload.lock.salt,
+          iv: payload.lock.iv,
+          cipher: payload.lock.cipher,
+          lockHint: payload.lock.lockHint || "",
+          lockedAt: payload.lock.lockedAt || now,
+        },
+      };
+    }
+  }
+
   const tentative = normalizeNoteBooleans({
     ...prev,
     ...(payload.title !== undefined ? { title: payload.title } : {}),
@@ -1027,7 +1199,13 @@ function localUpdateNote(id, payload) {
     ...(payload.archived !== undefined ? { archived: !!payload.archived } : {}),
     ...(payload.pinnedAt !== undefined ? { pinnedAt: payload.pinnedAt } : pinnedAtPatch),
     ...trashPatch,
+    ...lockPatch,
   });
+
+  // If locked, ensure plaintext content is not stored
+  if (NOTELOCK_ENABLED && tentative.lock?.isLocked) {
+    tentative.content = "";
+  }
 
   // Determine if meaningful fields changed to create a version snapshot
   const changedSummary = summarizeChange(
@@ -1333,6 +1511,46 @@ export async function purgeExpiredTrashedNotes() {
   return toDelete.length;
 }
 
+/**
+ * PUBLIC_INTERFACE
+ * Unlock a locked note for the current session using a 4-digit PIN.
+ * Returns true if unlocked, false otherwise.
+ */
+export async function unlockNoteForSession(noteId, pin) {
+  const state = ensureState();
+  const note = state.notes.find((n) => String(n.id) === String(noteId));
+  if (!NOTELOCK_ENABLED || !note?.lock?.isLocked) return true;
+  if (!/^\d{4}$/.test(String(pin || ""))) return false;
+  try {
+    const salt = base64ToBytes(note.lock.salt);
+    const keyPromise = deriveKeyFromPin(String(pin), salt);
+    const key = await keyPromise;
+    // Verify by trying a decrypt
+    await decrypt({ cipher: note.lock.cipher, iv: note.lock.iv }, key);
+    // success -> store promise for reuse
+    sessionUnlock.set(noteId, Promise.resolve(key));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// PUBLIC_INTERFACE
+export function relockNoteInSession(noteId) {
+  /** Remove the in-memory session key for a note (manual relock). */
+  sessionUnlock.clear(noteId);
+  return true;
+}
+
+// PUBLIC_INTERFACE
+export function isNoteLocked(note) {
+  /** Returns true if the note is locked and not unlocked in this session. */
+  if (!NOTELOCK_ENABLED) return false;
+  if (!note?.lock?.isLocked) return false;
+  const hasKey = !!sessionUnlock.get(note.id);
+  return !hasKey;
+}
+
 export const _internal = {
   useApi,
   DEFAULT_SORT,
@@ -1340,4 +1558,5 @@ export const _internal = {
   applySortFilter,
   ATTACHMENTS_LIMIT_PER_NOTE,
   ATTACHMENT_MAX_SIZE_BYTES,
+  NOTElOCK_ENABLED: NOTELOCK_ENABLED,
 };

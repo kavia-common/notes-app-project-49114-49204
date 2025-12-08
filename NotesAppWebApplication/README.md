@@ -172,5 +172,34 @@ Healthcheck:
 - A static healthcheck file is available at /healthz.txt (served from public/healthz.txt) returning "ok".
 - Configure your preview/proxy to check http://<host>:3000/healthz.txt
 
+## Note Lock (4-digit PIN)
+
+You can lock individual notes with a 4-digit PIN. When locked:
+- The note content is encrypted client-side with AES-GCM. The key is derived from your PIN using PBKDF2 (SHA-256) with a per-note random salt.
+- Only the ciphertext, IV, and salt are stored; your raw PIN is never saved.
+- The list shows a lock icon and masked preview; content is hidden until you unlock.
+
+How to use:
+- Create form: click "Set PIN" to assign a 4-digit PIN before saving your new note.
+- Edit dialog: click "Set PIN" to lock; "Remove PIN" to remove the lock (stores plaintext again).
+- Unlock: click "Unlock" on a locked note and enter your PIN. If correct, the note is unlocked for this browser session.
+
+Autosave and editing:
+- When a note is locked, autosave saves the encrypted body.
+- When you unlock and edit, content is re-encrypted on save.
+
+Security caveats:
+- Client-side encryption protects against casual inspection but cannot protect against an attacker with full access to your running browser context or device.
+- 4-digit PINs are low-entropy. Prefer not to use predictable PINs; this is not a replacement for robust account-level encryption.
+- Do not forget your PIN. Without it, content cannot be decrypted.
+
+Environment flags:
+- REACT_APP_NOTELOCK_ENABLED=true (default true): turns the feature on/off.
+- REACT_APP_NOTELOCK_SESSION_TIMEOUT=15 (minutes): inactivity timeout for auto-relock of session unlocks.
+
+Accessibility:
+- Modals are keyboard-accessible with focus management and aria-live feedback for errors.
+- Lock state changes are announced in live regions.
+
 ## Testing
 - npm test

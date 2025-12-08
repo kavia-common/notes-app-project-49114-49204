@@ -22,6 +22,9 @@ import {
   toggleFavorite,
   archiveNote,
   unarchiveNote,
+  unlockNoteForSession,
+  relockNoteInSession,
+  isNoteLocked,
 } from "../services/notesService";
 import { debounce } from "../utils/debounce";
 import { hasDuplicateTitle, normalizeTitle } from "../utils/titleUtils";
@@ -147,6 +150,16 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Lock UI state
+  const NOTELOCK_ENABLED = String(process.env.REACT_APP_NOTELOCK_ENABLED ?? "true") !== "false";
+  const [lockSetForNote, setLockSetForNote] = useState(null); // note or "__create__"
+  const [lockRemoveForNote, setLockRemoveForNote] = useState(null);
+  const [unlockForNote, setUnlockForNote] = useState(null);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState("");
+  const pinInputRef = useRef(null);
+  const lockAriaLiveRef = useRef(null);
 
   // Duplicate title detection state
   const [dupCreate, setDupCreate] = useState({ isDup: false, msg: "" });
@@ -1097,6 +1110,11 @@ export default function NotesPage() {
     }
 
     try {
+      if (NOTELOCK_ENABLED && editingNote?.lock?.isLocked && isNoteLocked(editingNote)) {
+        setFeedback({ type: "error", message: "Unlock this note before saving edits." });
+        resetFeedbackSoon();
+        return;
+      }
       setSavingEdit(true);
       const updated = await updateNote(editingNote.id, {
         title: t,
@@ -1417,6 +1435,17 @@ export default function NotesPage() {
                   {dupCreate.isDup ? (
                     <span className="chip" title="Duplicate title detected" aria-hidden="true">⚠️</span>
                   ) : null}
+                  {NOTELOCK_ENABLED && (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => { setLockSetForNote("__create__"); setPinInput(""); setPinError(""); setTimeout(() => pinInputRef.current?.focus(), 0); }}
+                      title="Set a 4-digit PIN for this new note"
+                      aria-label="Set a 4-digit PIN for this new note"
+                    >
+                      🔒 Set PIN
+                    </button>
+                  )}
                 </div>
                 <div id="create-title-help" className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                   {dupCreate.isDup ? "A note with this title already exists." : " "}
@@ -1782,16 +1811,33 @@ export default function NotesPage() {
                         <span
                           dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.title, debouncedQuery) }}
                         />
+                        {n.lock?.isLocked ? <span className="chip chip-locked" title="Locked" aria-label="Locked">🔒</span> : null}
                         {n.archived ? <span className="chip" style={{ marginLeft: 6 }}>Archived</span> : null}
                       </div>
                       <div className="note-date">
                         {n.updated_at ? new Date(n.updated_at).toLocaleString() : ""}
                       </div>
                     </div>
-                    <div
-                      className="note-content"
-                      dangerouslySetInnerHTML={{ __html: renderNoteHtml(n.content, debouncedQuery) }}
-                    />
+                    <div className="note-content">
+                      {n.lock?.isLocked && isNoteLocked(n) ? (
+                        <div className="lock-placeholder" role="status" aria-live="polite">
+                          <span className="lock-icon" aria-hidden="true">🔒</span>
+                          <span className="lock-text">This note is locked.</span>
+                          <button
+                            className="btn"
+                            type="button"
+                            onClick={() => { setUnlockForNote(n); setPinInput(""); setPinError(""); setTimeout(() => pinInputRef.current?.focus(), 0); }}
+                            aria-label={`Unlock note ${n.title}`}
+                          >
+                            Unlock
+                          </button>
+                        </div>
+                      ) : (
+                        <div
+                          dangerouslySetInnerHTML={{ __html: renderNoteHtml(n.content, debouncedQuery) }}
+                        />
+                      )}
+                    </div>
 
                     {/* attachments listing */}
                     {Array.isArray(n.attachments) && n.attachments.length > 0 && (
@@ -2455,7 +2501,43 @@ export default function NotesPage() {
                     {editingNote?.favorite ? "★ Favorited" : "☆ Favorite"}
                   </button>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {NOTELOCK_ENABLED && editingNote && (
+                    <>
+                      {editingNote.lock?.isLocked && isNoteLocked(editingNote) ? (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => { setUnlockForNote(editingNote); setPinInput(""); setPinError(""); setTimeout(() => pinInputRef.current?.focus(), 0); }}
+                          title="Unlock to edit"
+                          aria-label="Unlock to edit"
+                        >
+                          🔓 Unlock to edit
+                        </button>
+                      ) : null}
+                      {!editingNote.lock?.isLocked ? (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => { setLockSetForNote(editingNote); setPinInput(""); setPinError(""); setTimeout(() => pinInputRef.current?.focus(), 0); }}
+                          title="Set 4-digit PIN lock"
+                          aria-label="Set 4-digit PIN lock"
+                        >
+                          🔒 Set PIN
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => setLockRemoveForNote(editingNote)}
+                          title="Remove PIN lock"
+                          aria-label="Remove PIN lock"
+                        >
+                          🗝️ Remove PIN
+                        </button>
+                      )}
+                    </>
+                  )}
                   <button type="button" className="btn" onClick={closeEdit}>
                     Cancel
                   </button>
@@ -2470,6 +2552,172 @@ export default function NotesPage() {
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Lock/Unlock Modals */}
+      {(lockSetForNote || unlockForNote || lockRemoveForNote) && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => { setLockSetForNote(null); setUnlockForNote(null); setLockRemoveForNote(null); setPinError(""); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div ref={lockAriaLiveRef} className="visually-hidden" role="status" aria-live="polite" />
+            {lockSetForNote && (
+              <>
+                <div className="modal-header">Set PIN Lock</div>
+                <div className="form-row">
+                  <label htmlFor="pin-input">Enter a 4-digit PIN</label>
+                  <input
+                    id="pin-input"
+                    ref={pinInputRef}
+                    type="password"
+                    inputMode="numeric"
+                    pattern="\\d{4}"
+                    maxLength={4}
+                    value={pinInput}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+                      setPinInput(v);
+                      setPinError("");
+                    }}
+                    aria-invalid={!!pinError}
+                    aria-describedby="pin-error"
+                    placeholder="••••"
+                  />
+                  <div id="pin-error" className="muted" style={{ color: pinError ? "#dc2626" : "var(--muted)" }}>
+                    {pinError || "PIN is used to encrypt this note on this device. Do not forget it."}
+                  </div>
+                </div>
+                <div className="modal-actions">
+                  <button className="btn btn-danger" type="button" onClick={() => { setLockSetForNote(null); setPinError(""); }}>
+                    Cancel
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={async () => {
+                      if (!/^\d{4}$/.test(pinInput)) {
+                        setPinError("Enter a valid 4-digit PIN.");
+                        if (lockAriaLiveRef.current) lockAriaLiveRef.current.textContent = "PIN must be 4 digits.";
+                        return;
+                      }
+                      try {
+                        if (lockSetForNote === "__create__") {
+                          // For new note, we store lock intent in autosave by saving content with encryption on first save:
+                          const payload = { title, content, categories: parsedNewNoteCategories, attachments: newNoteAttachments, lockPin: pinInput };
+                          // Trigger immediate save using existing create handler path
+                          const created = await createNote(payload);
+                          setAutoSavedNoteId(created.id);
+                          setNotes((prev) =>
+                            _internal.applySortFilter([created, ...prev], { sortBy, category: selectedCategory, query: debouncedQuery, archivedMode })
+                          );
+                          setFeedback({ type: "success", message: "PIN set. Note locked." });
+                          resetFeedbackSoon();
+                        } else if (lockSetForNote?.id) {
+                          await updateNote(lockSetForNote.id, { lockPin: pinInput, content: editContent });
+                          await loadData({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
+                          setFeedback({ type: "success", message: "PIN set. Note locked." });
+                          resetFeedbackSoon();
+                        }
+                      } catch (e) {
+                        setPinError(e?.message || "Failed to set PIN.");
+                      } finally {
+                        setLockSetForNote(null);
+                        setPinInput("");
+                      }
+                    }}
+                  >
+                    Set PIN
+                  </button>
+                </div>
+              </>
+            )}
+
+            {unlockForNote && (
+              <>
+                <div className="modal-header">Unlock Note</div>
+                <div className="form-row">
+                  <label htmlFor="pin-unlock">Enter your 4-digit PIN</label>
+                  <input
+                    id="pin-unlock"
+                    ref={pinInputRef}
+                    type="password"
+                    inputMode="numeric"
+                    pattern="\\d{4}"
+                    maxLength={4}
+                    value={pinInput}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+                      setPinInput(v);
+                      setPinError("");
+                    }}
+                    aria-invalid={!!pinError}
+                    aria-describedby="pin-unlock-error"
+                    placeholder="••••"
+                  />
+                  <div id="pin-unlock-error" className="muted" style={{ color: pinError ? "#dc2626" : "var(--muted)" }}>
+                    {pinError || "Enter PIN to view and edit this note. Session auto-locks after inactivity."}
+                  </div>
+                </div>
+                <div className="modal-actions">
+                  <button className="btn btn-danger" type="button" onClick={() => { setUnlockForNote(null); setPinError(""); }}>
+                    Cancel
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={async () => {
+                      if (!/^\d{4}$/.test(pinInput)) {
+                        setPinError("Enter a valid 4-digit PIN.");
+                        return;
+                      }
+                      const ok = await unlockNoteForSession(unlockForNote.id, pinInput);
+                      if (!ok) {
+                        setPinError("Incorrect PIN.");
+                        if (lockAriaLiveRef.current) lockAriaLiveRef.current.textContent = "Incorrect PIN.";
+                        return;
+                      }
+                      // refresh list with decrypted content for this note
+                      await loadData({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
+                      setUnlockForNote(null);
+                      setPinInput("");
+                      setFeedback({ type: "success", message: "Note unlocked for this session." });
+                      resetFeedbackSoon();
+                    }}
+                  >
+                    Unlock
+                  </button>
+                </div>
+              </>
+            )}
+
+            {lockRemoveForNote && (
+              <>
+                <div className="modal-header">Remove PIN Lock</div>
+                <div className="modal-body">This will remove the PIN lock from this note. You will store content in plaintext. Continue?</div>
+                <div className="modal-actions">
+                  <button className="btn" type="button" onClick={() => setLockRemoveForNote(null)}>Cancel</button>
+                  <button
+                    className="btn btn-danger"
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await updateNote(lockRemoveForNote.id, { removeLock: true, content: editContent });
+                        relockNoteInSession(lockRemoveForNote.id);
+                        await loadData({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
+                        setFeedback({ type: "success", message: "Lock removed." });
+                        resetFeedbackSoon();
+                      } catch (e) {
+                        setFeedback({ type: "error", message: e?.message || "Failed to remove lock." });
+                        resetFeedbackSoon();
+                      } finally {
+                        setLockRemoveForNote(null);
+                      }
+                    }}
+                  >
+                    Remove Lock
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
