@@ -286,6 +286,21 @@ input[type="text"]:focus, textarea:focus, select:focus {
 }
 
 /* Rich-text editor */
+.template-picker, .template-picker-inline {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.template-picker select,
+.template-picker-inline select {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-right: 8px;
+}
+
 .rte-toolbar {
   display: flex;
   gap: 6px;

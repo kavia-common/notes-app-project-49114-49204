@@ -23,6 +23,10 @@ Endpoints
   - GET /api/backup/list
 and store JSON files under a server backups/ directory with timestamped names.
 
+Templates
+- Built-in note templates (Meeting Notes, Daily Journal, To-Do List) are available in the UI.
+- See NotesAppWebApplication/README.md (Templates section) for details and how to add custom templates.
+
 Restore caveats
 - Restoring replaces current notes with the snapshot (last-write-wins).
 - Invalid or incompatible backups are rejected.

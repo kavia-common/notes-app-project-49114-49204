@@ -30,6 +30,7 @@ import VoiceDictation from "../components/VoiceDictation";
 import ConnectivityStatus from "../components/ConnectivityStatus";
 import HandwritingCanvas from "../components/HandwritingCanvas";
 import NoteCount from "../components/NoteCount";
+import { NOTE_TEMPLATES, getTemplateById } from "../templates/templates";
 import {
   exportAllNotesAsTXT,
   exportAllNotesAsPDF,
@@ -157,6 +158,56 @@ export default function NotesPage() {
       }
     }
   }, [editContent, editingNote]);
+
+  // Template insertion helpers
+  function insertTemplateIntoEditor({ templateId, isEdit = false }) {
+    const tmpl = getTemplateById(templateId);
+    if (!tmpl) return;
+
+    // sanitize via existing sanitizer
+    const safeTemplate = sanitizeHtml(tmpl.contentHtml);
+
+    // choose editor/context
+    const ref = isEdit ? editEditorRef : createEditorRef;
+    if (!ref.current) return;
+
+    const currentHtml = sanitizeHtml(ref.current.innerHTML || "");
+    const isEmpty = !currentHtml || currentHtml.replace(/<br\s*\/?>/gi, "").replace(/<div>\s*<\/div>/gi, "").trim() === "";
+
+    let newHtml = "";
+    if (isEmpty) {
+      newHtml = safeTemplate;
+    } else {
+      // append with a visual divider
+      newHtml = `${currentHtml}<div><br></div><div><span class="muted">---</span></div><div><br></div>${safeTemplate}`;
+    }
+
+    // set DOM then state
+    ref.current.innerHTML = newHtml;
+
+    if (isEdit) {
+      handleEditEditorInput();
+    } else {
+      handleCreateEditorInput();
+    }
+
+    // place caret at top of inserted content (start of editor)
+    try {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      const node = ref.current.firstChild || ref.current;
+      range.setStart(node, 0);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch {}
+
+    // trigger autosave by nudging state (create mode)
+    if (!isEdit) {
+      autoSaveDebouncerRef.current?.({ title, content: sanitizeHtml(ref.current.innerHTML) });
+      setAutoSaveStatus(isOnline() ? "saving" : "offline");
+    }
+  }
 
   // Handle formatting buttons
   function execFormat(cmd, isEditMode = false) {
@@ -1210,6 +1261,26 @@ export default function NotesPage() {
 
             <form onSubmit={handleCreate} className="note-form" aria-label="Create note form">
               <div className="form-row">
+                <div className="template-picker">
+                  <label htmlFor="template-select" className="sr-only">Insert template</label>
+                  <select
+                    id="template-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      if (!id) return;
+                      insertTemplateIntoEditor({ templateId: id, isEdit: false });
+                      // reset selection so user can re-insert same template again if desired
+                      e.target.value = "";
+                    }}
+                    aria-label="Insert template"
+                  >
+                    <option value="" disabled>Insert template…</option>
+                    {NOTE_TEMPLATES.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <label htmlFor="note-title">Title</label>
                 <input
                   id="note-title"
@@ -1880,6 +1951,25 @@ export default function NotesPage() {
 
                 {/* Rich text toolbar for Edit */}
                 <div className="rte-toolbar" role="toolbar" aria-label="Formatting">
+                  <div className="template-picker-inline">
+                    <label htmlFor="edit-template-select" className="sr-only">Insert template</label>
+                    <select
+                      id="edit-template-select"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        if (!id) return;
+                        insertTemplateIntoEditor({ templateId: id, isEdit: true });
+                        e.target.value = "";
+                      }}
+                      aria-label="Insert template"
+                    >
+                      <option value="" disabled>Insert template…</option>
+                      {NOTE_TEMPLATES.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
                   <button type="button" className="icon-btn" onClick={() => execFormat('bold', true)} title="Bold (Ctrl/Cmd+B)"><strong>B</strong></button>
                   <button type="button" className="icon-btn" onClick={() => execFormat('italic', true)} title="Italic (Ctrl/Cmd+I)"><em>I</em></button>
                   <button type="button" className="icon-btn" onClick={() => execFormat('underline', true)} title="Underline (Ctrl/Cmd+U)"><u>U</u></button>

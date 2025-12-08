@@ -53,6 +53,30 @@ Retention policy:
 - Debounce interval can be configured via environment variable:
   - REACT_APP_AUTOSAVE_DEBOUNCE_MS (milliseconds, default 1000)
 
+## Templates
+
+Built-in templates let you quickly scaffold common note types:
+- Meeting Notes
+- Daily Journal
+- To-Do List
+
+How to use:
+- In the Create form, choose “Insert template…” to prefill the editor.
+- In the Edit dialog, use the template picker in the formatting toolbar to insert into the note.
+Behavior:
+- If the editor is empty, the template replaces the content.
+- If the editor has text, the template is appended with a simple divider.
+- In Create mode, insertion triggers auto-save; the caret moves to the top of the editor.
+
+Rendering:
+- Templates are plain, sanitized HTML compatible with the app’s rich-text editor and preview. Only inline-safe tags are used.
+
+Extending with custom templates (developers):
+- Add new template objects to src/templates/templates.js:
+  - { id: string, name: string, description: string, contentHtml: string }
+  - Keep HTML limited to allowed tags: b, strong, i, em, u, code, br, p, div, span.
+- The Template Picker automatically lists all entries in NOTE_TEMPLATES.
+
 ## Rich-text formatting
 
 The editor supports lightweight inline formatting:
