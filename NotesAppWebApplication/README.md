@@ -2,6 +2,39 @@
 
 This project provides a minimal React template with a clean, modern UI and minimal dependencies.
 
+## Backup & Restore (Frontend-only)
+
+This app includes a local backup and restore feature when running without a backend API:
+- Automatic daily backups are created while the app is open.
+- Manual actions are available in Settings:
+  - Backup now
+  - Restore from latest (with confirmation)
+  - Download backup (exports a .json file)
+  - Upload backup (imports a .json backup; you can then restore from latest)
+
+Storage details:
+- Backups are stored in localStorage as timestamped JSON snapshots under `notes.mvp.backups.v1`.
+- Each snapshot contains:
+  ```
+  {
+    "version": 1,
+    "data": {
+      "notes": [...],
+      "categories": [...],
+      "meta": { "version": 1, "created_at": "ISO" }
+    }
+  }
+  ```
+- Automatic backups keep a rolling history (last 3 auto snapshots).
+
+Restore behavior:
+- Restoring replaces the current local notes state with the snapshot (last-write-wins).
+- Validate backup file shape on import; invalid files are rejected.
+
+Caveats:
+- This is browser-local only. Clearing browser data will remove backups unless you downloaded them as files.
+- If a backend is introduced, migrate to server-side backup endpoints and filesystem storage.
+
 ## Features
 
 - **Lightweight**: No heavy UI frameworks - uses only vanilla CSS and React

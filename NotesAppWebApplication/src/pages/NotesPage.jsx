@@ -21,6 +21,16 @@ import {
   toggleFavorite,
 } from "../services/notesService";
 import "./notes.css";
+import {
+  listBackups,
+  getLatestBackupMeta,
+  backupNow as backupNowSvc,
+  restoreFromLatest as restoreFromLatestSvc,
+  restoreFromBackupId as restoreFromBackupIdSvc,
+  scheduleAutomaticBackupsDaily,
+  exportLatestBackupToFile,
+  importBackupFromFile,
+} from "../services/backupService";
 
 // PUBLIC_INTERFACE
 export default function NotesPage() {
@@ -75,6 +85,15 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Backup & restore UI state
+  const [backups, setBackups] = useState([]);
+  const [latestBackup, setLatestBackup] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const backupIntervalRef = useRef(null);
+  const [confirmRestoreOpen, setConfirmRestoreOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const createSubmitRef = useRef(null);
   const newAttachInputRef = useRef(null);
@@ -132,9 +151,32 @@ export default function NotesPage() {
     (async () => {
       await loadData();
       if (!mounted) return;
+      // initialize backups state
+      try {
+        setBackups(listBackups());
+        setLatestBackup(getLatestBackupMeta());
+      } catch {}
+      // run daily auto-backup once on load
+      try {
+        scheduleAutomaticBackupsDaily();
+        setBackups(listBackups());
+        setLatestBackup(getLatestBackupMeta());
+      } catch {}
     })();
+    // refresh latest backup metadata every 60s and run daily check
+    backupIntervalRef.current = window.setInterval(() => {
+      try {
+        scheduleAutomaticBackupsDaily();
+        setBackups(listBackups());
+        setLatestBackup(getLatestBackupMeta());
+      } catch {}
+    }, 60_000);
     return () => {
       mounted = false;
+      if (backupIntervalRef.current) {
+        clearInterval(backupIntervalRef.current);
+        backupIntervalRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -214,6 +256,142 @@ export default function NotesPage() {
   function resetFeedbackSoon() {
     window.clearTimeout(resetFeedbackSoon._t);
     resetFeedbackSoon._t = window.setTimeout(() => setFeedback(null), 2500);
+  }
+
+  async function handleBackupNow() {
+    try {
+      setBackingUp(true);
+      const meta = backupNowSvc({ source: "manual" });
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Backup created (${meta.count} notes).` });
+      resetFeedbackSoon();
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to create backup." });
+      resetFeedbackSoon();
+    } finally {
+      setBackingUp(false);
+    }
+  }
+
+  async function handleRestoreLatestConfirmed() {
+    try {
+      setRestoring(true);
+      const result = restoreFromLatestSvc();
+      // reload notes/categories from restored state
+      await loadData();
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Restored ${result.restored} notes.` });
+      resetFeedbackSoon();
+      setConfirmRestoreOpen(false);
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to restore backup." });
+      resetFeedbackSoon();
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  function handleDownloadBackup() {
+    try {
+      const meta = exportLatestBackupToFile();
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Backup downloaded (${meta.count} notes).` });
+      resetFeedbackSoon();
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to download backup." });
+      resetFeedbackSoon();
+    }
+  }
+
+  async function handleUploadBackup(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      setImporting(true);
+      const meta = await importBackupFromFile(file);
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Backup imported (${meta.count} notes). You can now Restore from latest.` });
+      resetFeedbackSoon();
+      e.target.value = "";
+    } catch (err) {
+      setFeedback({ type: "error", message: err?.message || "Invalid backup file." });
+      resetFeedbackSoon();
+      e.target.value = "";
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleBackupNow() {
+    try {
+      setBackingUp(true);
+      const meta = backupNowSvc({ source: "manual" });
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Backup created (${meta.count} notes).` });
+      resetFeedbackSoon();
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to create backup." });
+      resetFeedbackSoon();
+    } finally {
+      setBackingUp(false);
+    }
+  }
+
+  async function handleRestoreLatestConfirmed() {
+    try {
+      setRestoring(true);
+      const result = restoreFromLatestSvc();
+      // reload notes/categories from restored state
+      await loadData();
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Restored ${result.restored} notes.` });
+      resetFeedbackSoon();
+      setConfirmRestoreOpen(false);
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to restore backup." });
+      resetFeedbackSoon();
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  function handleDownloadBackup() {
+    try {
+      const meta = exportLatestBackupToFile();
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Backup downloaded (${meta.count} notes).` });
+      resetFeedbackSoon();
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to download backup." });
+      resetFeedbackSoon();
+    }
+  }
+
+  async function handleUploadBackup(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      setImporting(true);
+      const meta = await importBackupFromFile(file);
+      setBackups(listBackups());
+      setLatestBackup(getLatestBackupMeta());
+      setFeedback({ type: "success", message: `Backup imported (${meta.count} notes). You can now Restore from latest.` });
+      resetFeedbackSoon();
+      e.target.value = "";
+    } catch (err) {
+      setFeedback({ type: "error", message: err?.message || "Invalid backup file." });
+      resetFeedbackSoon();
+      e.target.value = "";
+    } finally {
+      setImporting(false);
+    }
   }
 
   const parsedNewNoteCategories = useMemo(() => {
@@ -811,6 +989,7 @@ export default function NotesPage() {
             {feedback && (
               <div
                 role="status"
+                aria-description="feedback"
                 className={`feedback ${feedback.type === "error" ? "error" : "success"}`}
               >
                 {feedback.message}
@@ -1048,6 +1227,23 @@ export default function NotesPage() {
               </button>
               <button className="btn btn-danger" onClick={confirmDelete}>
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmRestoreOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal">
+            <div className="modal-header">Restore from latest backup</div>
+            <div className="modal-body">
+              This will replace your current notes with the latest backup snapshot. This action cannot be undone. Proceed?
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setConfirmRestoreOpen(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleRestoreLatestConfirmed} disabled={restoring} aria-disabled={restoring}>
+                {restoring ? "Restoring…" : "Restore"}
               </button>
             </div>
           </div>
