@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
   /** Determine dev server port: prefer REACT_APP_PORT, default 3000 */
   const port = Number(env.REACT_APP_PORT || process.env.REACT_APP_PORT || 3000);
 
+  /** Determine backend port used in proxy; default 5179 */
+  const backendPort = Number(process.env.BACKEND_PORT || 5179);
+
   return {
     plugins: [react()],
     server: {
@@ -16,7 +19,15 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      allowedHosts: ['vscode-internal-31398-qa.qa01.cloud.kavia.ai']
+      allowedHosts: ['vscode-internal-31398-qa.qa01.cloud.kavia.ai'],
+      proxy: {
+        // Proxy backend health and API calls to FastAPI during development
+        '^/(healthz|api)(/.*)?$': {
+          target: `http://localhost:${backendPort}`,
+          changeOrigin: true,
+          secure: false,
+        }
+      }
     },
     preview: {
       host: '0.0.0.0',
@@ -27,8 +38,8 @@ export default defineConfig(({ mode }) => {
     define: {
       // PUBLIC_INTERFACE
       __APP_CONFIG__: JSON.stringify({
-        API_BASE: env.REACT_APP_API_BASE || '',
-        BACKEND_URL: env.REACT_APP_BACKEND_URL || '',
+        API_BASE: env.REACT_APP_API_BASE || '/api',
+        BACKEND_URL: env.REACT_APP_BACKEND_URL || '', // Prefer relative path via proxy in dev
         FRONTEND_URL: env.REACT_APP_FRONTEND_URL || '',
         WS_URL: env.REACT_APP_WS_URL || '',
         NODE_ENV: env.REACT_APP_NODE_ENV || 'development',

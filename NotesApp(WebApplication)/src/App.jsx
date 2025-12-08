@@ -7,16 +7,19 @@ export default function App() {
   const cfg = typeof __APP_CONFIG__ !== 'undefined' ? __APP_CONFIG__ : {};
 
   const [health, setHealth] = useState('unknown');
+  const [debugHealthUrl, setDebugHealthUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    // Try backend health if configured
-    const url = `${cfg.BACKEND_URL || cfg.API_BASE || ''}${cfg.HEALTHCHECK_PATH || '/healthz'}`;
-    if (!url || url.startsWith('/')) {
-      // no backend, mark healthy as app loaded
-      setHealth('frontend: ok');
-      return;
-    }
+
+    // Prefer relative paths with Vite proxy in development
+    const healthPath = cfg.HEALTHCHECK_PATH || '/healthz';
+    const hasAbsoluteBackend = (cfg.BACKEND_URL || '').startsWith('http');
+    const base = hasAbsoluteBackend ? (cfg.BACKEND_URL || cfg.API_BASE || '') : '';
+    const url = base ? `${base}${healthPath}` : healthPath;
+
+    setDebugHealthUrl(url);
+
     fetch(url, { method: 'GET' })
       .then(async (r) => {
         if (cancelled) return;
@@ -36,6 +39,7 @@ export default function App() {
     <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif', margin: '2rem' }}>
       <h1>Notes App</h1>
       <p>Status: {health}</p>
+      <small>Health URL: {debugHealthUrl}</small>
       <section style={{ marginTop: '1rem' }}>
         <h2>Configuration</h2>
         <ul>
