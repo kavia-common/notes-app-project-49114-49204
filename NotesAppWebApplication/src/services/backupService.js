@@ -7,18 +7,21 @@ import {
 // Stores timestamped JSON snapshots of notes state in localStorage with a rolling history.
 // Supports manual backup, restore from latest or a specific snapshot ID, list snapshots,
 // and import/export (download/upload) of backup files.
+// Preserves trash metadata (trashed, deletedAt).
 //
 // PUBLIC INTERFACES are annotated with PUBLIC_INTERFACE.
 
-const BACKUP_LS_KEY = "notes.mvp.backups.v1"; // array of backup metadata+data
+const BACKUP_LS_KEY = "notes.mvp.backups.v2"; // array of backup metadata+data
 const BACKUP_AUTO_SCHEDULE_KEY = "notes.mvp.backups.lastAutoAt";
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 const BACKUP_ROLLING_KEEP = 3; // keep last 3 automatic backups by default
 
 // Helper to read entire notes state from local storage directly to avoid import cycle
 function readCurrentNotesState() {
   try {
-    const raw = localStorage.getItem("notes.mvp.state.v3");
+    const raw =
+      localStorage.getItem("notes.mvp.state.v4") ||
+      localStorage.getItem("notes.mvp.state.v3");
     if (!raw) return { notes: [], categories: [] };
     const parsed = JSON.parse(raw);
     const notes = Array.isArray(parsed?.notes) ? parsed.notes : [];
@@ -32,7 +35,6 @@ function readCurrentNotesState() {
 // Validate backup data shape (simple checks)
 function validateBackupShape(backup) {
   if (!backup || typeof backup !== "object") return false;
-  if (backup.version !== BACKUP_VERSION) return false;
   if (!Array.isArray(backup.data?.notes)) return false;
   if (!Array.isArray(backup.data?.categories)) return false;
   return true;
@@ -91,6 +93,7 @@ export function backupNow({ source = "manual" } = {}) {
   /**
    * Create a snapshot of current notes and categories, store it with a timestamped id.
    * Returns { id, created_at, count }.
+   * Includes trashed metadata.
    */
   const { notes, categories } = readCurrentNotesState();
   const created_at = getNowIso();
@@ -152,7 +155,7 @@ export function restoreFromLatest() {
 export function restoreFromBackupId(backupId) {
   /**
    * Restore from a specific snapshot id.
-   * Uses last-write-wins merge: current state is replaced entirely by saved snapshot.
+   * Replaces current state with saved snapshot.
    */
   const list = readBackups();
   const found = list.find((b) => String(b.id) === String(backupId));
@@ -161,13 +164,15 @@ export function restoreFromBackupId(backupId) {
 
   const { notes, categories } = found.data;
 
-  // Data integrity: basic normalization steps similar to notesService
+  // Basic normalization; keep trashed metadata intact
   const normalizedNotes = Array.isArray(notes)
     ? notes.map((n) => ({
         ...n,
         pinned: !!n.pinned,
         favorite: !!n.favorite,
         archived: !!n.archived,
+        trashed: !!n.trashed,
+        deletedAt: n.trashed && n.deletedAt ? new Date(n.deletedAt).toISOString() : (n.trashed ? new Date().toISOString() : null),
         pinnedAt: n.pinned ? (n.pinnedAt ? new Date(n.pinnedAt).toISOString() : (n.updated_at || n.created_at || new Date().toISOString())) : null,
         categories: Array.isArray(n.categories) ? n.categories : [],
         attachments: Array.isArray(n.attachments) ? n.attachments : [],
@@ -181,7 +186,7 @@ export function restoreFromBackupId(backupId) {
   };
 
   try {
-    localStorage.setItem("notes.mvp.state.v3", JSON.stringify(normalized));
+    localStorage.setItem("notes.mvp.state.v4", JSON.stringify(normalized));
   } catch (e) {
     throw new Error("Failed to write restored data to storage");
   }

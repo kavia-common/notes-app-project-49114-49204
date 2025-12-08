@@ -6,7 +6,11 @@
 // Adds attachments support with local data URL persistence and API stubs.
 // Adds reminders with local scheduler helpers and API stubs.
 // Adds pinned/favorite support with migration, sorting, and API patch stubs.
+// Adds Trash support: trashed flag, deletedAt timestamp, restore, permanent delete, auto-purge.
 //
+// IMPORTANT: This file is the public interface used by the app's pages/components.
+// PUBLIC_INTERFACE tags are added to exported functions for documentation visibility.
+
 const API_BASE =
   process.env.REACT_APP_API_BASE ||
   process.env.REACT_APP_BACKEND_URL ||
@@ -36,10 +40,13 @@ const DEFAULT_SEARCH_LS_KEY = "notes.search.query";
 const ATTACHMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const ATTACHMENTS_LIMIT_PER_NOTE = 10;
 
+// Trash retention
+const TRASH_RETENTION_DAYS = 30;
+
 /* ===== Local in-memory store with localStorage persistence ===== */
 const LS_KEY = "notes.mvp.list"; // legacy notes array
-const LS_KEY_NOTES_STATE = "notes.mvp.state.v3"; // bumped to v3 to include pinned/favorite
-const MIGRATION_FLAG = "notes.migrated.v3";
+const LS_KEY_NOTES_STATE = "notes.mvp.state.v4"; // bumped to v4 to include trash fields
+const MIGRATION_FLAG = "notes.migrated.v4";
 
 /**
  * Local state shape:
@@ -56,7 +63,11 @@ const MIGRATION_FLAG = "notes.migrated.v3";
  *     },
  *     pinned?: boolean,
  *     pinnedAt?: string|null, // ISO when pinned
- *     favorite?: boolean
+ *     favorite?: boolean,
+ *     archived?: boolean,
+ *     // Trash
+ *     trashed?: boolean,
+ *     deletedAt?: string|null
  *   }],
  *   categories: string[]
  * }
@@ -78,11 +89,15 @@ function normalizeNoteBooleans(n) {
     pinned: !!n.pinned,
     favorite: !!n.favorite,
     archived: !!n.archived,
+    trashed: !!n.trashed,
     pinnedAt: n.pinned
       ? n.pinnedAt
         ? new Date(n.pinnedAt).toISOString()
         : n.updated_at || n.created_at || new Date().toISOString()
       : null,
+    deletedAt: n.trashed && n.deletedAt
+      ? (new Date(n.deletedAt).toISOString())
+      : (n.trashed ? new Date().toISOString() : null),
   };
 }
 
@@ -122,7 +137,6 @@ function writeLocalState(state) {
 
 /**
  * INTERNAL: Build a version snapshot from a note.
- * We store minimal fields needed for restore/diff and a human-readable summary.
  */
 function buildVersionFromNote(note, summary = "") {
   const now = new Date().toISOString();
@@ -140,6 +154,8 @@ function buildVersionFromNote(note, summary = "") {
       favorite: !!note.favorite,
       pinnedAt: note.pinnedAt || null,
       archived: !!note.archived,
+      trashed: !!note.trashed,
+      deletedAt: note.deletedAt || null,
     },
   };
 }
@@ -169,6 +185,9 @@ export function summarizeChange(prev, next) {
   const prevArch = !!prev?.archived;
   const nextArch = !!next?.archived;
   if (prevArch !== nextArch) changed.push("archived");
+  const prevTrash = !!prev?.trashed;
+  const nextTrash = !!next?.trashed;
+  if (prevTrash !== nextTrash || (prev?.deletedAt || null) !== (next?.deletedAt || null)) changed.push("trash");
   const prevPin = !!prev?.pinned;
   const nextPin = !!next?.pinned;
   if (prevPin !== nextPin || (prev?.pinnedAt || null) !== (next?.pinnedAt || null)) changed.push("pinned");
@@ -266,6 +285,8 @@ export async function revertNoteToVersion(noteId, versionId) {
     favorite: !!selected.data.favorite,
     pinnedAt: selected.data.pinnedAt || null,
     archived: !!selected.data.archived,
+    trashed: !!selected.data.trashed,
+    deletedAt: selected.data.deletedAt || null,
     updated_at: now,
   });
 
@@ -278,16 +299,16 @@ function migrateIfNeeded() {
   try {
     if (localStorage.getItem(MIGRATION_FLAG)) return;
 
-    // v2 -> v3 migration path: try current; else read older v2 or legacy
+    // v3 -> v4 migration path: try current; else read older versions or legacy
     let state = null;
     try {
-      const rawV3 = localStorage.getItem(LS_KEY_NOTES_STATE);
-      if (rawV3) {
-        state = JSON.parse(rawV3);
+      const rawV4 = localStorage.getItem(LS_KEY_NOTES_STATE);
+      if (rawV4) {
+        state = JSON.parse(rawV4);
       } else {
-        const rawV2 = localStorage.getItem("notes.mvp.state.v2");
-        if (rawV2) {
-          state = JSON.parse(rawV2);
+        const rawV3 = localStorage.getItem("notes.mvp.state.v3");
+        if (rawV3) {
+          state = JSON.parse(rawV3);
         }
       }
     } catch {
@@ -302,6 +323,8 @@ function migrateIfNeeded() {
             categories: Array.isArray(n.categories) ? n.categories : [],
             attachments: Array.isArray(n.attachments) ? n.attachments : [],
             reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+            trashed: !!n.trashed,
+            deletedAt: n.trashed ? (n.deletedAt ? new Date(n.deletedAt).toISOString() : new Date().toISOString()) : null,
           })
         ),
         categories: Array.isArray(state.categories) ? state.categories : [],
@@ -320,6 +343,8 @@ function migrateIfNeeded() {
             categories: Array.isArray(n.categories) ? n.categories : [],
             attachments: Array.isArray(n.attachments) ? n.attachments : [],
             reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
+            trashed: false,
+            deletedAt: null,
           })
         ),
         categories: [],
@@ -383,6 +408,9 @@ function toBase64(file) {
 function applySortFilter(notes, options = {}) {
   const { sortBy = DEFAULT_SORT, category, query, archivedMode = ARCHIVE_FILTER_MODES.active } = options;
   let arr = Array.isArray(notes) ? [...notes] : [];
+
+  // Exclude trashed from all lists by default here; callers for Trash list will filter separately
+  arr = arr.filter(n => !n.trashed);
 
   // Archived filter (default to active only)
   if (archivedMode === ARCHIVE_FILTER_MODES.active) {
@@ -468,8 +496,9 @@ function applySortFilter(notes, options = {}) {
 export async function listNotes(options = {}) {
   /**
    * List notes with optional sort, category filter and search query.
-   * options: { sortBy, category, query }
+   * options: { sortBy, category, query, archivedMode }
    * Uses API if available, else from local storage with migration support.
+   * Trashed notes are excluded by default in this list.
    */
   if (useApi) {
     try {
@@ -484,6 +513,8 @@ export async function listNotes(options = {}) {
       if (options.archivedMode && options.archivedMode !== ARCHIVE_FILTER_MODES.all) {
         u.searchParams.set("archived", options.archivedMode === ARCHIVE_FILTER_MODES.archived ? "true" : "false");
       }
+      // Ensure trashed excluded on API if supported - pass param
+      u.searchParams.set("trashed", "false");
 
       const res = await fetch(u.toString().replace(window.location.origin, ""), { method: "GET" });
       if (!res.ok) throw new Error(`Failed to fetch notes: ${res.status}`);
@@ -507,6 +538,27 @@ export async function listNotes(options = {}) {
   }
   const state = ensureState();
   return applySortFilter(state.notes, options);
+}
+
+// PUBLIC_INTERFACE
+export async function listTrashedNotes({ query } = {}) {
+  /** List only trashed notes, optionally filtered by query */
+  const state = ensureState();
+  let arr = state.notes.filter(n => !!n.trashed);
+  if (query && String(query).trim()) {
+    const q = String(query).trim().toLowerCase();
+    arr = arr.filter(n => (n.title || "").toLowerCase().includes(q) || (n.content || "").toLowerCase().includes(q));
+  }
+  // Sort trashed by deletedAt desc, then updated_at desc
+  arr.sort((a, b) => {
+    const da = a.deletedAt ? new Date(a.deletedAt).getTime() : 0;
+    const db = b.deletedAt ? new Date(b.deletedAt).getTime() : 0;
+    if (db !== da) return db - da;
+    const ua = new Date(a.updated_at || a.created_at).getTime();
+    const ub = new Date(b.updated_at || b.created_at).getTime();
+    return ub - ua;
+  });
+  return arr;
 }
 
 // PUBLIC_INTERFACE
@@ -536,6 +588,7 @@ export async function createNote(note) {
   /**
    * Create a note (title, content, categories?: string[], attachments?: array).
    * Uses API if available, otherwise local.
+   * Initializes trashed=false, deletedAt=null.
    */
   const payload = {
     title: note.title,
@@ -543,6 +596,8 @@ export async function createNote(note) {
     categories: Array.isArray(note.categories)
       ? note.categories.filter(Boolean)
       : [],
+    trashed: false,
+    deletedAt: null,
     // attachments ignored for API create; handled by separate upload
   };
   if (useApi) {
@@ -579,24 +634,30 @@ export async function createNote(note) {
 // PUBLIC_INTERFACE
 export async function updateNote(id, note) {
   /**
-   * Update a note by id with {title?, content?, categories?, attachments?, reminder?, pinned?, favorite?, pinnedAt?}; API if available, else local.
-   * For API path, attachments should be managed by upload/deleteAttachment endpoints, so we ignore attachments array here.
+   * Update a note by id with {title?, content?, categories?, attachments?, reminder?, pinned?, favorite?, pinnedAt?, archived?};
+   * API if available, else local.
+   * Trash fields are controlled via moveToTrash/restore; ignore direct override in generic update.
    */
+  const sanitized = { ...note };
+  delete sanitized.trashed;
+  delete sanitized.deletedAt;
+
   const payload = {
-    ...(note.title !== undefined ? { title: note.title } : {}),
-    ...(note.content !== undefined ? { content: note.content } : {}),
-    ...(note.categories !== undefined
-      ? { categories: Array.isArray(note.categories) ? note.categories : [] }
+    ...(sanitized.title !== undefined ? { title: sanitized.title } : {}),
+    ...(sanitized.content !== undefined ? { content: sanitized.content } : {}),
+    ...(sanitized.categories !== undefined
+      ? { categories: Array.isArray(sanitized.categories) ? sanitized.categories : [] }
       : {}),
     ...(useApi
       ? {} // do not send attachments in PUT in API mode
-      : note.attachments !== undefined
-      ? { attachments: Array.isArray(note.attachments) ? note.attachments : [] }
+      : sanitized.attachments !== undefined
+      ? { attachments: Array.isArray(sanitized.attachments) ? sanitized.attachments : [] }
       : {}),
-    ...(note.reminder !== undefined ? { reminder: normalizeReminder(note.reminder) } : {}),
-    ...(note.pinned !== undefined ? { pinned: !!note.pinned } : {}),
-    ...(note.favorite !== undefined ? { favorite: !!note.favorite } : {}),
-    ...(note.pinnedAt !== undefined ? { pinnedAt: note.pinnedAt } : {}),
+    ...(sanitized.reminder !== undefined ? { reminder: normalizeReminder(sanitized.reminder) } : {}),
+    ...(sanitized.pinned !== undefined ? { pinned: !!sanitized.pinned } : {}),
+    ...(sanitized.favorite !== undefined ? { favorite: !!sanitized.favorite } : {}),
+    ...(sanitized.pinnedAt !== undefined ? { pinnedAt: sanitized.pinnedAt } : {}),
+    ...(sanitized.archived !== undefined ? { archived: !!sanitized.archived } : {}),
   };
   if (useApi) {
     try {
@@ -623,18 +684,65 @@ export async function updateNote(id, note) {
 
 // PUBLIC_INTERFACE
 export async function deleteNote(id) {
-  /** Delete note by id; API if available or local. */
+  /** Move note to Trash instead of hard delete (backwards-compatible name). */
+  return moveNoteToTrash(id);
+}
+
+// PUBLIC_INTERFACE
+export async function permanentlyDeleteNote(id) {
+  /** Permanently delete a note by id (irreversible). */
   if (useApi) {
     try {
       const res = await fetch(`${API_BASE}/notes/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`Failed to delete note: ${res.status}`);
-      return true;
+      // fall through to remove locally as well
     } catch (e) {
-      console.warn("Falling back to local delete due to API error:", e.message);
-      return localDeleteNote(id);
+      console.warn("API permanent delete failed or offline; applying locally:", e.message);
     }
   }
-  return localDeleteNote(id);
+  return localPermanentDelete(id);
+}
+
+// PUBLIC_INTERFACE
+export async function moveNoteToTrash(id) {
+  /** Soft-delete a note: set trashed=true, deletedAt=now. */
+  const nowIso = new Date().toISOString();
+  if (useApi) {
+    // If backend supports PATCH for trash, try it; otherwise local-only
+    try {
+      const res = await fetch(`${API_BASE}/notes/${id}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ trashed: true, deletedAt: nowIso }),
+      });
+      if (!res.ok) throw new Error(`Failed to move to trash: ${res.status}`);
+      const updated = await res.json();
+      return localUpdateNote(id, normalizeNoteBooleans({ ...updated, trashed: true, deletedAt: nowIso }));
+    } catch (e) {
+      console.warn("Trash PATCH failed or unsupported, applying locally:", e.message);
+    }
+  }
+  return localUpdateNote(id, { trashed: true, deletedAt: nowIso });
+}
+
+// PUBLIC_INTERFACE
+export async function restoreNoteFromTrash(id) {
+  /** Restore a trashed note: set trashed=false, deletedAt=null. */
+  if (useApi) {
+    try {
+      const res = await fetch(`${API_BASE}/notes/${id}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ trashed: false, deletedAt: null }),
+      });
+      if (!res.ok) throw new Error(`Failed to restore note: ${res.status}`);
+      const updated = await res.json();
+      return localUpdateNote(id, normalizeNoteBooleans({ ...updated, trashed: false, deletedAt: null }));
+    } catch (e) {
+      console.warn("Restore PATCH failed or unsupported, applying locally:", e.message);
+    }
+  }
+  return localUpdateNote(id, { trashed: false, deletedAt: null });
 }
 
 // PUBLIC_INTERFACE
@@ -690,7 +798,10 @@ export async function listArchived(options = {}) {
 export async function fetchNotes() {
   /** Fetch all notes; throws on HTTP error when API mode is on. Falls back to local state when API not configured. */
   if (useApi) {
-    const res = await fetch(`${API_BASE}/notes`);
+    const u = new URL(`${API_BASE}/notes`, window.location.origin);
+    // Explicitly exclude trashed
+    u.searchParams.set("trashed", "false");
+    const res = await fetch(u.toString().replace(window.location.origin, ""));
     if (!res.ok) throw new Error("Failed to fetch notes");
     const data = await res.json();
     return Array.isArray(data)
@@ -704,9 +815,9 @@ export async function fetchNotes() {
         )
       : [];
   }
-  // Local fallback: return stored notes
+  // Local fallback: return stored notes (not trashed filter is caller's responsibility here)
   const state = ensureState();
-  return state.notes;
+  return state.notes.filter(n => !n.trashed);
 }
 
 // PUBLIC_INTERFACE
@@ -857,6 +968,8 @@ function localCreateNote(payload) {
     pinnedAt: null,
     versions: [], // initialize versions history
     archived: false,
+    trashed: false,
+    deletedAt: null,
   });
   const next = [newNote, ...state.notes];
   saveNotes(next);
@@ -867,7 +980,7 @@ function localCreateNote(payload) {
   return Promise.resolve(newNote);
 }
 
-function localDeleteNote(id) {
+function localPermanentDelete(id) {
   const state = ensureState();
   const next = state.notes.filter((n) => String(n.id) !== String(id));
   saveNotes(next);
@@ -894,7 +1007,14 @@ function localUpdateNote(id, payload) {
       pinnedAtPatch = { pinnedAt: null };
     }
   }
-  const tentative = {
+  // trash patches
+  const trashPatch = {};
+  if (payload.trashed !== undefined) {
+    trashPatch.trashed = !!payload.trashed;
+    trashPatch.deletedAt = payload.trashed ? (payload.deletedAt || now) : null;
+  }
+
+  const tentative = normalizeNoteBooleans({
     ...prev,
     ...(payload.title !== undefined ? { title: payload.title } : {}),
     ...(payload.content !== undefined ? { content: payload.content } : {}),
@@ -909,7 +1029,8 @@ function localUpdateNote(id, payload) {
     ...(payload.favorite !== undefined ? { favorite: !!payload.favorite } : {}),
     ...(payload.archived !== undefined ? { archived: !!payload.archived } : {}),
     ...(payload.pinnedAt !== undefined ? { pinnedAt: payload.pinnedAt } : pinnedAtPatch),
-  };
+    ...trashPatch,
+  });
 
   // Determine if meaningful fields changed to create a version snapshot
   const changedSummary = summarizeChange(
@@ -923,6 +1044,8 @@ function localUpdateNote(id, payload) {
       favorite: prev.favorite,
       archived: prev.archived,
       pinnedAt: prev.pinnedAt,
+      trashed: prev.trashed,
+      deletedAt: prev.deletedAt,
     },
     {
       title: tentative.title,
@@ -934,6 +1057,8 @@ function localUpdateNote(id, payload) {
       favorite: tentative.favorite,
       archived: tentative.archived,
       pinnedAt: tentative.pinnedAt,
+      trashed: tentative.trashed,
+      deletedAt: tentative.deletedAt,
     }
   );
 
@@ -1182,6 +1307,33 @@ export async function toggleFavorite(noteId) {
   }
 
   return localUpdateNote(noteId, { favorite: targetFavorite });
+}
+
+// PUBLIC_INTERFACE
+export function getTrashRetentionDays() {
+  /** Returns retention period in days for trashed items before auto-purge */
+  return TRASH_RETENTION_DAYS;
+}
+
+// PUBLIC_INTERFACE
+export async function purgeExpiredTrashedNotes() {
+  /** Permanently delete trashed notes older than TRASH_RETENTION_DAYS */
+  const state = ensureState();
+  const now = Date.now();
+  const cutoffMs = TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const keep = [];
+  const toDelete = [];
+  for (const n of state.notes) {
+    if (n.trashed && n.deletedAt && (now - Date.parse(n.deletedAt)) > cutoffMs) {
+      toDelete.push(n.id);
+    } else {
+      keep.push(n);
+    }
+  }
+  if (toDelete.length > 0) {
+    saveNotes(keep);
+  }
+  return toDelete.length;
 }
 
 export const _internal = {

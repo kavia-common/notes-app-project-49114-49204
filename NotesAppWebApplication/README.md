@@ -1,227 +1,43 @@
-# Lightweight React Template for KAVIA
+# Notes App (Web)
 
-This project provides a minimal React template with a clean, modern UI and minimal dependencies.
-
-## Archive Notes
-
-You can move notes to an Archive instead of deleting them:
-
-- Archive: Use the “Archive” action on a note. Archived notes are hidden from the main list by default.
-- Unarchive: Use the “Unarchive” action to bring it back to the active list.
-- View archived: Use the Archived filter chips (Active | Archived | All) above the list to switch views.
-
-Behavior:
-- Archived is a per-note flag stored locally (and sent to the backend if available).
-- Archived notes do not appear in the default Active view.
-- Backups and exports include the archived state; PDF/TXT metadata indicates if a note is archived.
-- Offline: archive/unarchive actions are queued and synchronized when connectivity returns.
-
-## Export & Share
-
-This app supports exporting notes client-side:
-
-Single note:
-- TXT: Download a plain text file.
-- PDF: Generate a PDF using jsPDF.
-- Share: Copies note content (with title/metadata header) to the clipboard.
-
-All notes:
-- Export TXT: Concatenate all notes into a single .txt.
-- Export PDF: Combine all notes into a single .pdf (each note starts on a new page).
-- Backup JSON: Full backup in a simple .json file for restore/import.
-- ZIP TXT/PDF: Batch export each note as its own TXT or PDF inside a .zip (via JSZip).
-
-Where to find:
-- In the “Your Notes” toolbar on the Notes page, use Export TXT/PDF, Backup JSON, and ZIP buttons.
-- In each note’s action row, use TXT, PDF, and Share for single-note exports.
-
-Browser support and fallbacks:
-- Clipboard API is used for Share. If unavailable/blocked, a legacy fallback is attempted; if it fails, an alert is shown.
-- Downloads use Blob + URL.createObjectURL, supported in modern browsers. iOS Safari may open a preview or share sheet.
-- jsPDF/JSZip are dynamically imported to keep the initial bundle small.
-
-Dependencies:
-- jspdf (PDF generation)
-- jszip (ZIP creation)
-
-## Backup & Restore (Frontend-only)
-
-This app includes a local backup and restore feature when running without a backend API:
-- Automatic daily backups are created while the app is open.
-- Manual actions are available in Settings:
-  - Backup now
-  - Restore from latest (with confirmation)
-  - Download backup (exports a .json file)
-  - Upload backup (imports a .json backup; you can then restore from latest)
-
-Storage details:
-- Backups are stored in localStorage as timestamped JSON snapshots under `notes.mvp.backups.v1`.
-- Each snapshot contains:
-  ```
-  {
-    "version": 1,
-    "data": {
-      "notes": [...],
-      "categories": [...],
-      "meta": { "version": 1, "created_at": "ISO" }
-    }
-  }
-  ```
-- Automatic backups keep a rolling history (last 3 auto snapshots).
-
-Restore behavior:
-- Restoring replaces the current local notes state with the snapshot (last-write-wins).
-- Validate backup file shape on import; invalid files are rejected.
-
-Caveats:
-- This is browser-local only. Clearing browser data will remove backups unless you downloaded them as files.
-- If a backend is introduced, migrate to server-side backup endpoints and filesystem storage.
-
-## Voice-to-Text Dictation
-
-You can dictate notes using your microphone with the browser Web Speech API:
-
-- Microphone button to start/stop dictation
-- Language selection (default en-US)
-- Insert mode: Append to current content or Replace it
-- Live listening indicator and interim transcript preview
-- Error and permission messages
-- Quick Create: make a new note directly from captured speech (available in Create section)
-
-How to use:
-1. In the Create section, click “🎤 Dictate” to start listening. Language and mode can be configured.
-2. Speak into your mic; interim text appears and final text inserts into the content field (append or replace).
-3. Click “⏹ Stop” to stop listening.
-4. Use “➕ Quick Create” to create a new note instantly from the last finalized speech.
-
-Edit modal:
-- The same dictation UI appears above the content field in the Edit dialog to insert dictated text into an existing note.
-
-Permissions and privacy:
-- Your browser will prompt for microphone access on first use. Grant permission for dictation to work.
-- If denied, re-enable permissions in your browser’s site settings.
-- Speech processing is handled by the browser; no extra backend is used.
-
-Browser support:
-- Supported: Most Chromium-based browsers (Chrome, Edge).
-- Partial/No support: Firefox, Safari, and some mobile browsers. If unsupported, the UI will show a helpful message.
-
-Limitations:
-- Web Speech API is experimental; accuracy/availability varies by browser.
-- Long sessions may auto-stop; click Dictate again to resume.
-- Background noise can reduce accuracy.
+A simple notes app built with React that supports creating, editing, deleting, backing up, and exporting notes. Offline access is supported via browser storage and an offline-friendly flow.
 
 ## Features
+- Create, edit, and delete notes
+- Full-text search on title/content
+- Backup to localStorage and restore
+- Export notes to JSON/TXT/PDF/ZIP
+- Offline-friendly with local persistence
+- Archive notes
+- Trash (Recently Deleted) with 30-day retention
 
-- **Lightweight**: No heavy UI frameworks - uses only vanilla CSS and React
-- **Modern UI**: Clean, responsive design with KAVIA brand styling
-- **Fast**: Minimal dependencies for quick loading times
-- **Simple**: Easy to understand and modify
+## Trash (Recently Deleted)
+- Deleting a note now moves it to Trash (soft delete). The note is marked with:
+  - `trashed: true`
+  - `deletedAt: ISO timestamp`
+- Trashed notes are excluded from the main list. Use a Trash view/filter in the UI to see trashed notes (if present in your current UI).
+- Actions available for trashed notes:
+  - Restore: returns the note to the main list.
+  - Delete Permanently: removes the note forever.
+- Auto-purge: Trashed notes older than 30 days are purged automatically in the background when the app is in use.
 
-## Getting Started
+Retention policy:
+- Trashed notes are retained for up to 30 days from `deletedAt` and then permanently removed.
+- Policy may be adjusted in code via TRASH_RETENTION_DAYS.
 
-In the project directory, you can run:
-
-### `npm start`
-
-Runs the app in development mode using a container-friendly launcher that binds to 0.0.0.0 and honors PORT.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser (or the container URL provided by your environment).
-
-### `npm run dev`
-
-Alias for development with container-friendly host/port. Works with CRA and preview flags.
-
-Respects, in order of precedence:
-- CLI flags: `--port`, `--host` (e.g., `npm run dev -- --port 3000 --host 0.0.0.0`)
-- Environment variables: `PORT`, `HOST`
-- Fallbacks: `REACT_APP_PORT` for port, and `0.0.0.0` for host; default port 3000
-
-Examples:
-- HOST=0.0.0.0 PORT=3000 npm start
-- HOST=0.0.0.0 PORT=3000 npm run dev
-- REACT_APP_PORT=3000 npm run dev
-- npm run dev -- --port 3000 --host 0.0.0.0
-
-Healthcheck:
-- Root path `/` responds with the CRA index page once the dev server is ready.
-- You can influence host/port via `.env` (see `.env.example`).
-
-### `npm test`
-
-Launches the test runner in interactive watch mode.
-
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-## Customization
-
-### Colors
-
-The main brand colors are defined as CSS variables in `src/App.css`:
-
-```css
-:root {
-  --kavia-orange: #E87A41;
-  --kavia-dark: #1A1A1A;
-  --text-color: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.7);
-  --border-color: rgba(255, 255, 255, 0.1);
-}
-```
-
-### Components
-
-This template uses pure HTML/CSS components instead of a UI framework. You can find component styles in `src/App.css`. 
-
-Common components include:
-- Buttons (`.btn`, `.btn-large`)
-- Container (`.container`)
-- Navigation (`.navbar`)
-- Typography (`.title`, `.subtitle`, `.description`)
+## Backup and Export
+- Backups (local) and exports (JSON) include trash metadata (`trashed`, `deletedAt`).
+- When exporting JSON, you can choose to exclude trashed notes.
+- Restoring from backup preserves trash status and timestamps.
 
 ## Offline Access and Sync
+- Notes are stored in browser storage for offline use.
+- Create, edit, archive, and delete while offline; changes are kept locally.
+- When a backend is introduced, queued changes can sync back (architecture ready).
 
-The app supports offline-first usage:
-- Notes are cached locally using IndexedDB and are available when offline.
-- Create, edit, and delete while offline; changes are queued and synced when you reconnect.
-- Background sync runs automatically upon reconnection.
-- Conflict resolution: last-write-wins; a basic version history is kept internally (not yet surfaced in UI).
+## Development
+- npm install
+- npm start
 
-Indicators:
-- Online/Offline status appears in the header.
-- Pending local changes are not explicitly listed yet but will sync in the background when connectivity returns.
-
-Limitations:
-- If the same note is edited on multiple devices while offline, the most recent update wins when syncing resumes.
-- Clearing browser storage will remove local cache and unsynced changes.
-- Version history fallback is internal only; no UI is provided to review conflicts.
-
-## Learn More
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## Testing
+- npm test

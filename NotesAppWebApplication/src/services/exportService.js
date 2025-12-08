@@ -4,11 +4,9 @@
 // Uses client-side libraries to generate files in-browser.
 // - TXT export via Blob
 // - PDF export via jsPDF
-// - JSON export via Blob
+// - JSON export via Blob with trashed metadata and excludeTrashed option
 // - ZIP batch export via JSZip (optional)
 // - Clipboard helpers via Clipboard API
-//
-// All functions are safe to call in modern browsers with graceful fallbacks.
 //
 
 // PUBLIC_INTERFACE
@@ -40,6 +38,7 @@ export async function exportNoteAsPDF(note, fileNameOverride) {
     note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
     note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
     note.archived ? `Archived: yes` : null,
+    note.trashed ? `Trashed: ${note.deletedAt ? formatDate(note.deletedAt) : 'yes'}` : null,
     Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
   ].filter(Boolean).join(' | ');
 
@@ -87,13 +86,15 @@ export async function exportAllNotesAsTXT(notes, fileName = 'notes.txt') {
 }
 
 // PUBLIC_INTERFACE
-export async function exportAllNotesAsJSON(notes, fileName = 'notes-backup.json') {
-  /** Export all notes as a JSON backup file. */
+export async function exportAllNotesAsJSON(notes, fileName = 'notes-backup.json', { excludeTrashed = false } = {}) {
+  /** Export all notes as a JSON backup file, optionally excluding trashed notes. */
+  const filtered = excludeTrashed ? notes.filter(n => !n.trashed) : notes;
   const payload = {
     type: 'notes-app-backup',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
-    notes,
+    excludeTrashed,
+    notes: filtered,
   };
   const json = JSON.stringify(payload, null, 2);
   triggerDownloadFromText(json, sanitizeFileName(fileName), 'application/json;charset=utf-8');
@@ -122,6 +123,7 @@ export async function exportAllNotesAsPDF(notes, fileName = 'notes.pdf') {
       note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
       note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
       note.archived ? `Archived: yes` : null,
+      note.trashed ? `Trashed: ${note.deletedAt ? formatDate(note.deletedAt) : 'yes'}` : null,
       Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
     ].filter(Boolean).join(' | ');
 
@@ -202,6 +204,7 @@ export async function exportNotesAsZIP(options) {
         note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
         note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
         note.archived ? `Archived: yes` : null,
+        note.trashed ? `Trashed: ${note.deletedAt ? formatDate(note.deletedAt) : 'yes'}` : null,
         Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
       ].filter(Boolean).join(' | ');
 
@@ -285,6 +288,8 @@ function formatNoteAsText(note) {
   const meta = [
     note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
     note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
+    note.archived ? `Archived: yes` : null,
+    note.trashed ? `Trashed: ${note.deletedAt ? formatDate(note.deletedAt) : 'yes'}` : null,
     Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
   ].filter(Boolean).join(' | ');
   const header = meta ? `${title}\n${meta}\n\n` : `${title}\n\n`;
@@ -321,7 +326,7 @@ function triggerDownloadFromBlob(blob, fileName) {
 
 function sanitizeFileName(name) {
   return (name || 'file')
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[<>:":/\\|?*\x00-\x1F]/g, '_')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 200);
