@@ -22,6 +22,14 @@ import {
 } from "../services/notesService";
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
+import {
+  exportAllNotesAsTXT,
+  exportAllNotesAsPDF,
+  exportAllNotesAsJSON,
+  exportNotesAsZIP,
+  exportNoteAsTXT,
+  exportNoteAsPDF,
+} from "../services/exportService";
 import { VoiceInsertMode, appendWithSpace } from "../services/voiceToText";
 import {
   listBackups,
@@ -1132,6 +1140,52 @@ export default function NotesPage() {
                     ))}
                   </select>
                 </div>
+                <div className="export-toolbar" role="group" aria-label="Export">
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    onClick={() => exportAllNotesAsTXT(notes, "all-notes.txt")}
+                    title="Export all notes as a single TXT"
+                    disabled={!notes.length}
+                  >
+                    Export TXT
+                  </button>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    onClick={() => exportAllNotesAsPDF(notes, "all-notes.pdf")}
+                    title="Export all notes as a single PDF"
+                    disabled={!notes.length}
+                  >
+                    Export PDF
+                  </button>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    onClick={() => exportAllNotesAsJSON(notes, "notes-backup.json")}
+                    title="Download JSON backup"
+                  >
+                    Backup JSON
+                  </button>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    onClick={() => exportNotesAsZIP({ notes, formats: ["txt"], fileName: "notes-txt.zip" })}
+                    title="ZIP each note as TXT"
+                    disabled={!notes.length}
+                  >
+                    ZIP TXT
+                  </button>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    onClick={() => exportNotesAsZIP({ notes, formats: ["pdf"], fileName: "notes-pdf.zip" })}
+                    title="ZIP each note as PDF"
+                    disabled={!notes.length}
+                  >
+                    ZIP PDF
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1298,6 +1352,41 @@ export default function NotesPage() {
                         type="button"
                       >
                         Delete
+                      </button>
+                      <button
+                        className="icon-btn"
+                        onClick={() => exportNoteAsTXT(n)}
+                        aria-label={`Export ${n.title} as TXT`}
+                        type="button"
+                        title="Export TXT"
+                      >
+                        TXT
+                      </button>
+                      <button
+                        className="icon-btn"
+                        onClick={() => exportNoteAsPDF(n)}
+                        aria-label={`Export ${n.title} as PDF`}
+                        type="button"
+                        title="Export PDF"
+                      >
+                        PDF
+                      </button>
+                      <button
+                        className="icon-btn"
+                        onClick={async () => {
+                          try {
+                            const { shareNoteToClipboard } = await import("../services/exportService");
+                            const ok = await shareNoteToClipboard(n);
+                            if (!ok) alert("Copy to clipboard failed.");
+                          } catch {
+                            alert("Copy to clipboard failed.");
+                          }
+                        }}
+                        aria-label={`Copy ${n.title} to clipboard`}
+                        type="button"
+                        title="Copy to clipboard"
+                      >
+                        Share
                       </button>
                     </div>
                   </li>

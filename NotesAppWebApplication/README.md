@@ -2,6 +2,34 @@
 
 This project provides a minimal React template with a clean, modern UI and minimal dependencies.
 
+## Export & Share
+
+This app supports exporting notes client-side:
+
+Single note:
+- TXT: Download a plain text file.
+- PDF: Generate a PDF using jsPDF.
+- Share: Copies note content (with title/metadata header) to the clipboard.
+
+All notes:
+- Export TXT: Concatenate all notes into a single .txt.
+- Export PDF: Combine all notes into a single .pdf (each note starts on a new page).
+- Backup JSON: Full backup in a simple .json file for restore/import.
+- ZIP TXT/PDF: Batch export each note as its own TXT or PDF inside a .zip (via JSZip).
+
+Where to find:
+- In the “Your Notes” toolbar on the Notes page, use Export TXT/PDF, Backup JSON, and ZIP buttons.
+- In each note’s action row, use TXT, PDF, and Share for single-note exports.
+
+Browser support and fallbacks:
+- Clipboard API is used for Share. If unavailable/blocked, a legacy fallback is attempted; if it fails, an alert is shown.
+- Downloads use Blob + URL.createObjectURL, supported in modern browsers. iOS Safari may open a preview or share sheet.
+- jsPDF/JSZip are dynamically imported to keep the initial bundle small.
+
+Dependencies:
+- jspdf (PDF generation)
+- jszip (ZIP creation)
+
 ## Backup & Restore (Frontend-only)
 
 This app includes a local backup and restore feature when running without a backend API:
