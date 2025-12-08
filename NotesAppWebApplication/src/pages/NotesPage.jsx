@@ -28,7 +28,7 @@ import {
 } from "../services/notesService";
 import { formatRelative, formatExact, parseDate } from "../utils/time";
 import { debounce } from "../utils/debounce";
-import { hasDuplicateTitle, normalizeTitle } from "../utils/titleUtils";
+import { hasDuplicateTitle, normalizeTitle, deriveTitleFromContent, isUserProvidedTitle } from "../utils/titleUtils";
 import { isOnline, subscribeConnectivity, backgroundSync } from "../services/offlineSyncService";
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
@@ -646,9 +646,12 @@ export default function NotesPage() {
     const m = getTextMetricsFromHtml(safe);
     setCreateMetrics({ words: m.words, chars: m.chars });
     announceMetricsRef.current?.(`${m.words} words • ${m.chars} characters`);
-    // schedule debounced autosave
-    autoSaveDebouncerRef.current?.({ title, content: safe, backgroundColor: newBackgroundColor || null });
-    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: safe });
+    // schedule debounced autosave (use derived title if user hasn't provided one)
+    const proposalTitle = isUserProvidedTitle(title) ? title : deriveTitleFromContent(safe);
+    autoSaveDebouncerRef.current?.({ title: proposalTitle, content: safe, backgroundColor: newBackgroundColor || null });
+    if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: proposalTitle, content: safe });
+    // also update duplicate warning in create form
+    debouncedCheckCreateTitleRef.current?.({ value: proposalTitle, notesList: notes });
     setAutoSaveStatus(isOnline() ? "saving" : "offline");
   }
 
@@ -661,6 +664,9 @@ export default function NotesPage() {
     const m = getTextMetricsFromHtml(safe);
     setEditMetrics({ words: m.words, chars: m.chars });
     announceMetricsRef.current?.(`${m.words} words • ${m.chars} characters`);
+    // In edit mode, if title is empty, keep showing derived duplicate warnings against others excluding self
+    const proposal = isUserProvidedTitle(editTitle) ? editTitle : deriveTitleFromContent(safe);
+    debouncedCheckEditTitleRef.current?.({ value: proposal, notesList: notes, currentId: editingNote?.id });
   }
 
   // HTML sanitization
@@ -719,9 +725,12 @@ export default function NotesPage() {
   useEffect(() => {
     // Define the actual save routine
     async function performAutoSave(payload) {
-      const { title: t, content: c } = payload;
+      // Respect auto-title when user hasn't provided one
+      const effectiveTitle = isUserProvidedTitle(title) ? (payload.title ?? title) : deriveTitleFromContent(payload.content ?? content);
+      const { content: c } = payload;
+      const t = String(effectiveTitle || "").trim();
       // validation: prevent empty notes being persisted
-      if (!t.trim() && !c.trim()) {
+      if (!t && !c.trim()) {
         setAutoSaveStatus("");
         return;
       }
@@ -744,13 +753,13 @@ export default function NotesPage() {
         // If offline or request likely to fail, cache and show offline
         const online = isOnline();
         if (!online) {
-          saveDraftToLocal(autoSavedNoteId, { ...payload, ...nowPatch });
+          saveDraftToLocal(autoSavedNoteId, { title: t, content: c, ...nowPatch });
           setAutoSaveStatus("offline");
           return;
         }
 
         if (autoSavedNoteId) {
-          const updated = await updateNote(autoSavedNoteId, { ...payload, ...nowPatch });
+          const updated = await updateNote(autoSavedNoteId, { title: t, content: c, ...nowPatch });
           // Reflect latest updated_at in the list if present
           setNotes((prev) =>
             prev.map((n) => (String(n.id) === String(autoSavedNoteId) ? { ...n, ...updated } : n))
@@ -761,7 +770,7 @@ export default function NotesPage() {
           showSaveSuccess("Note saved successfully");
         } else {
           // First create only when both have some content (title or content non-empty)
-          const created = await createNote({ ...payload });
+          const created = await createNote({ title: t, content: c, backgroundColor: payload.backgroundColor ?? null });
           setAutoSavedNoteId(created.id);
           // Insert into list immediately so user sees it
           setNotes((prev) =>
@@ -1244,7 +1253,8 @@ export default function NotesPage() {
   
   async function handleCreate(e) {
     e.preventDefault();
-    const t = title.trim();
+    const derivedTitleCreate = title.trim() || deriveTitleFromContent(content);
+    const t = derivedTitleCreate.trim();
     const c = content.trim();
 
     // Duplicate block
@@ -1385,7 +1395,7 @@ export default function NotesPage() {
   async function handleSaveEdit(e) {
     e.preventDefault();
     if (!editingNote) return;
-    const t = editTitle.trim();
+    const t = (editTitle.trim() || deriveTitleFromContent(editContent)).trim();
     const c = editContent.trim();
 
     // Duplicate block (exclude same note id)
@@ -1881,14 +1891,16 @@ export default function NotesPage() {
                     onChange={(e) => {
                       const v = e.target.value;
                       setTitle(v);
-                      // duplicate check (debounced)
-                      debouncedCheckCreateTitleRef.current?.({ value: v, notesList: notes });
-                      // schedule autosave
-                      autoSaveDebouncerRef.current?.({ title: v, content, backgroundColor: newBackgroundColor || null });
-                      if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: v, content });
+                      // duplicate check (debounced) — consider auto-derived when empty
+                      const proposal = v.trim() || deriveTitleFromContent(content);
+                      debouncedCheckCreateTitleRef.current?.({ value: proposal, notesList: notes });
+                      // schedule autosave with proposed title
+                      autoSaveDebouncerRef.current?.({ title: proposal, content, backgroundColor: newBackgroundColor || null });
+                      if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title: proposal, content });
                       setAutoSaveStatus(isOnline() ? "saving" : "offline");
                     }}
-                    placeholder="Your note title"
+                    placeholder={(title.trim() ? "Your note title" : (deriveTitleFromContent(content) ? `Auto: ${deriveTitleFromContent(content)}` : "Your note title"))}
+                    style={!isUserProvidedTitle(title) && deriveTitleFromContent(content) ? { fontStyle: "italic", opacity: 0.85 } : undefined}
                     required
                     aria-required="true"
                     aria-describedby="create-title-help"
@@ -2726,8 +2738,11 @@ export default function NotesPage() {
                     onChange={(e) => {
                       const v = e.target.value;
                       setEditTitle(v);
-                      debouncedCheckEditTitleRef.current?.({ value: v, notesList: notes, currentId: editingNote?.id });
+                      const proposal = v.trim() || deriveTitleFromContent(editContent);
+                      debouncedCheckEditTitleRef.current?.({ value: proposal, notesList: notes, currentId: editingNote?.id });
                     }}
+                    placeholder={(editTitle.trim() ? "" : (deriveTitleFromContent(editContent) ? `Auto: ${deriveTitleFromContent(editContent)}` : ""))}
+                    style={!isUserProvidedTitle(editTitle) && deriveTitleFromContent(editContent) ? { fontStyle: "italic", opacity: 0.85 } : undefined}
                     required
                     aria-required="true"
                     autoFocus

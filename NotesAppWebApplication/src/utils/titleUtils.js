@@ -1,6 +1,7 @@
 //
-// Utilities for title normalization and duplicate detection
+// Utilities for title normalization, derivation and duplicate detection
 //
+import { stripHtml } from "./textMetrics";
 
 // PUBLIC_INTERFACE
 export function normalizeTitle(raw) {
@@ -30,4 +31,21 @@ export function hasDuplicateTitle({ title, notes, excludeId = null }) {
     if (nt && nt === target) return true;
   }
   return false;
+}
+
+// PUBLIC_INTERFACE
+export function deriveTitleFromContent(html, { maxLength = 80 } = {}) {
+  /** Derive a title from the first non-empty line of sanitized content (HTML stripped). */
+  const plain = stripHtml(String(html || ""));
+  const lines = plain.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const line = (lines[0] || "").replace(/\s+/g, " ").trim();
+  if (!line) return "";
+  const truncated = line.length > maxLength ? `${line.slice(0, maxLength)}…` : line;
+  return truncated;
+}
+
+// PUBLIC_INTERFACE
+export function isUserProvidedTitle(titleState) {
+  /** Returns true if the current title input is non-empty after trimming. */
+  return String(titleState || "").trim().length > 0;
 }

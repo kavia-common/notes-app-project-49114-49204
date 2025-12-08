@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import DOMPurify from "dompurify";
 import { debounce } from "../utils/debounce";
-import { hasDuplicateTitle } from "../utils/titleUtils";
+import { hasDuplicateTitle, deriveTitleFromContent, isUserProvidedTitle } from "../utils/titleUtils";
 import { stripHtml as stripHtmlMetrics, getTextMetricsFromHtml, throttleAnnouncements } from "../utils/textMetrics";
 
 /**
@@ -194,8 +194,12 @@ export default function QuickAddNote({
     if (saving) return;
     if (!validate()) return;
 
-    // Block on duplicate (final guard)
-    if (hasDuplicateTitle({ title: (title || "").trim(), notes, excludeId: null })) {
+    // Determine final title (user-provided or derived)
+    const provided = (title || "").trim();
+    const derived = provided ? provided : deriveTitleFromContent(content);
+
+    // Block on duplicate (final guard) using final title value
+    if (hasDuplicateTitle({ title: derived, notes, excludeId: null })) {
       setDupWarn({ isDup: true, msg: "A note with this title already exists." });
       if (ariaLiveRef.current) ariaLiveRef.current.textContent = "A note with this title already exists.";
       setError("A note with this title already exists");
@@ -203,11 +207,10 @@ export default function QuickAddNote({
     }
     try {
       setSaving(true);
-      const safeTitle = (title || "").trim();
       const trimmed = stripHtml(content).trim();
       const safeContent = sanitize(trimmed);
       const note = await onCreate({
-        title: safeTitle || autoTitleFromContent(trimmed),
+        title: derived,
         content: safeContent,
         backgroundColor: backgroundColor || null,
       });
@@ -229,6 +232,11 @@ export default function QuickAddNote({
   const remaining = maxLength ? Math.max(0, maxLength - stripHtml(content).length) : null;
 
   if (!isOpen) return null;
+
+  // Live auto-title placeholder and styling
+  const autoTitle = !isUserProvidedTitle(title) ? deriveTitleFromContent(content) : "";
+  const titlePlaceholder = autoTitle ? `Auto: ${autoTitle}` : "Title (optional)";
+  const titleStyle = !isUserProvidedTitle(title) && autoTitle ? { fontStyle: "italic", opacity: 0.8 } : undefined;
 
   return (
     <div
@@ -258,9 +266,11 @@ export default function QuickAddNote({
                 onChange={(e) => {
                   const v = e.target.value;
                   setTitle(v);
-                  debouncedCheckRef.current?.({ value: v });
+                  const proposal = v.trim() || deriveTitleFromContent(content);
+                  debouncedCheckRef.current?.({ value: proposal });
                 }}
-                placeholder="Title (optional)"
+                placeholder={titlePlaceholder}
+                style={titleStyle}
                 aria-describedby="quickadd-title-help"
               />
               {dupWarn.isDup ? (
@@ -303,6 +313,9 @@ export default function QuickAddNote({
                 const m = getTextMetricsFromHtml(v);
                 setMetrics({ words: m.words, chars: m.chars });
                 announceCountsRef.current?.(`${m.words} words • ${m.chars} characters`);
+                // live duplicate hint based on derived title if user hasn't provided one
+                const proposal = isUserProvidedTitle(title) ? title.trim() : deriveTitleFromContent(v);
+                debouncedCheckRef.current?.({ value: proposal });
               }}
               placeholder="Write a quick note…"
               rows={4}
@@ -366,11 +379,6 @@ function defaultSanitize(html) {
 function stripHtml(s) {
   // Keep legacy callers; delegate to shared util to ensure consistent behavior.
   return stripHtmlMetrics(s);
-}
-
-function autoTitleFromContent(text) {
-  const t = (text || "").trim().split("\n")[0];
-  return t.length > 40 ? `${t.slice(0, 40)}…` : t || "Untitled";
 }
 
 function getFocusable(container) {
