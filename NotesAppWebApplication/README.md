@@ -2,6 +2,20 @@
 
 This project provides a minimal React template with a clean, modern UI and minimal dependencies.
 
+## Archive Notes
+
+You can move notes to an Archive instead of deleting them:
+
+- Archive: Use the “Archive” action on a note. Archived notes are hidden from the main list by default.
+- Unarchive: Use the “Unarchive” action to bring it back to the active list.
+- View archived: Use the Archived filter chips (Active | Archived | All) above the list to switch views.
+
+Behavior:
+- Archived is a per-note flag stored locally (and sent to the backend if available).
+- Archived notes do not appear in the default Active view.
+- Backups and exports include the archived state; PDF/TXT metadata indicates if a note is archived.
+- Offline: archive/unarchive actions are queued and synchronized when connectivity returns.
+
 ## Export & Share
 
 This app supports exporting notes client-side:

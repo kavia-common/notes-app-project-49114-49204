@@ -17,7 +17,7 @@ import {
   idbGetMeta,
   idbSetMeta,
 } from './indexedDb';
-import { fetchNotes, createNote, updateNote, deleteNote as apiDeleteNote } from './notesService';
+import { fetchNotes, createNote, updateNote, deleteNote as apiDeleteNote, archiveNote, unarchiveNote } from './notesService';
 
 // PUBLIC_INTERFACE
 export function isOnline() {
@@ -126,6 +126,16 @@ async function applyQueueAgainstServer() {
         const noteId = clientIdMap.get(item.noteId) || item.noteId;
         await apiDeleteNote(noteId);
         await idbDeleteNoteById(noteId);
+        appliedQids.push(item.qid);
+      } else if (item.type === 'archive') {
+        const noteId = clientIdMap.get(item.noteId) || item.noteId;
+        const res = await archiveNote(noteId);
+        await idbUpsertNote({ ...res, _unsynced: false, _localOnly: false });
+        appliedQids.push(item.qid);
+      } else if (item.type === 'unarchive') {
+        const noteId = clientIdMap.get(item.noteId) || item.noteId;
+        const res = await unarchiveNote(noteId);
+        await idbUpsertNote({ ...res, _unsynced: false, _localOnly: false });
         appliedQids.push(item.qid);
       }
     } catch (e) {
@@ -243,6 +253,42 @@ export async function queueDelete(noteId) {
   // Mark removal locally and queue
   await idbDeleteNoteById(noteId);
   await idbQueueMutation({ type: 'delete', noteId, ts });
+  return { queued: true };
+}
+
+// PUBLIC_INTERFACE
+export async function queueArchive(noteId) {
+  /** Queue archive mutation for a note; attempts immediate if online. */
+  const ts = Date.now();
+  if (isOnline()) {
+    try {
+      const res = await archiveNote(noteId);
+      await idbUpsertNote({ ...res, _unsynced: false, _localOnly: false });
+      return { queued: false };
+    } catch (e) {
+      // fallthrough
+    }
+  }
+  await idbUpsertNote({ id: noteId, archived: true, updated_at: new Date().toISOString(), _unsynced: true });
+  await idbQueueMutation({ type: 'archive', noteId, ts });
+  return { queued: true };
+}
+
+// PUBLIC_INTERFACE
+export async function queueUnarchive(noteId) {
+  /** Queue unarchive mutation for a note; attempts immediate if online. */
+  const ts = Date.now();
+  if (isOnline()) {
+    try {
+      const res = await unarchiveNote(noteId);
+      await idbUpsertNote({ ...res, _unsynced: false, _localOnly: false });
+      return { queued: false };
+    } catch (e) {
+      // fallthrough
+    }
+  }
+  await idbUpsertNote({ id: noteId, archived: false, updated_at: new Date().toISOString(), _unsynced: true });
+  await idbQueueMutation({ type: 'unarchive', noteId, ts });
   return { queued: true };
 }
 

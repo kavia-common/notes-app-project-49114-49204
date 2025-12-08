@@ -25,6 +25,11 @@ const headers = {
 
 // Types and defaults
 const DEFAULT_SORT = "updated_desc"; // updated_desc | updated_asc | created_desc | created_asc | title_asc | title_desc
+const ARCHIVE_FILTER_MODES = {
+  active: 'active',
+  archived: 'archived',
+  all: 'all',
+};
 const DEFAULT_SEARCH_LS_KEY = "notes.search.query";
 
 // Attachment related defaults
@@ -72,6 +77,7 @@ function normalizeNoteBooleans(n) {
     ...n,
     pinned: !!n.pinned,
     favorite: !!n.favorite,
+    archived: !!n.archived,
     pinnedAt: n.pinned
       ? n.pinnedAt
         ? new Date(n.pinnedAt).toISOString()
@@ -133,6 +139,7 @@ function buildVersionFromNote(note, summary = "") {
       pinned: !!note.pinned,
       favorite: !!note.favorite,
       pinnedAt: note.pinnedAt || null,
+      archived: !!note.archived,
     },
   };
 }
@@ -159,6 +166,9 @@ export function summarizeChange(prev, next) {
   const prevFav = !!prev?.favorite;
   const nextFav = !!next?.favorite;
   if (prevFav !== nextFav) changed.push("favorite");
+  const prevArch = !!prev?.archived;
+  const nextArch = !!next?.archived;
+  if (prevArch !== nextArch) changed.push("archived");
   const prevPin = !!prev?.pinned;
   const nextPin = !!next?.pinned;
   if (prevPin !== nextPin || (prev?.pinnedAt || null) !== (next?.pinnedAt || null)) changed.push("pinned");
@@ -255,6 +265,7 @@ export async function revertNoteToVersion(noteId, versionId) {
     pinned: !!selected.data.pinned,
     favorite: !!selected.data.favorite,
     pinnedAt: selected.data.pinnedAt || null,
+    archived: !!selected.data.archived,
     updated_at: now,
   });
 
@@ -370,8 +381,15 @@ function toBase64(file) {
 
 // Sort/filter now needs to place pinned first (by pinnedAt desc) among matched notes
 function applySortFilter(notes, options = {}) {
-  const { sortBy = DEFAULT_SORT, category, query } = options;
+  const { sortBy = DEFAULT_SORT, category, query, archivedMode = ARCHIVE_FILTER_MODES.active } = options;
   let arr = Array.isArray(notes) ? [...notes] : [];
+
+  // Archived filter (default to active only)
+  if (archivedMode === ARCHIVE_FILTER_MODES.active) {
+    arr = arr.filter(n => !n.archived);
+  } else if (archivedMode === ARCHIVE_FILTER_MODES.archived) {
+    arr = arr.filter(n => !!n.archived);
+  } // 'all' shows both
 
   // Category filter (single category selection)
   if (category && category !== "all") {
@@ -463,6 +481,9 @@ export async function listNotes(options = {}) {
         u.searchParams.set("q", String(options.query).trim());
       if (options.category && options.category !== "all")
         u.searchParams.set("tags", options.category);
+      if (options.archivedMode && options.archivedMode !== ARCHIVE_FILTER_MODES.all) {
+        u.searchParams.set("archived", options.archivedMode === ARCHIVE_FILTER_MODES.archived ? "true" : "false");
+      }
 
       const res = await fetch(u.toString().replace(window.location.origin, ""), { method: "GET" });
       if (!res.ok) throw new Error(`Failed to fetch notes: ${res.status}`);
@@ -489,8 +510,8 @@ export async function listNotes(options = {}) {
 }
 
 // PUBLIC_INTERFACE
-export async function searchNotes({ query, sortBy, category } = {}) {
-  return listNotes({ query, sortBy, category });
+export async function searchNotes({ query, sortBy, category, archivedMode } = {}) {
+  return listNotes({ query, sortBy, category, archivedMode });
 }
 
 // PUBLIC_INTERFACE
@@ -614,6 +635,55 @@ export async function deleteNote(id) {
     }
   }
   return localDeleteNote(id);
+}
+
+// PUBLIC_INTERFACE
+export async function archiveNote(id) {
+  /** Archive a note by id (soft-hide from active list). */
+  const nowIso = new Date().toISOString();
+  if (useApi) {
+    try {
+      const res = await fetch(`${API_BASE}/notes/${id}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ archived: true, updated_at: nowIso }),
+      });
+      if (!res.ok) throw new Error(`Failed to archive note: ${res.status}`);
+      const updated = await res.json();
+      return localUpdateNote(id, normalizeNoteBooleans({ ...updated, archived: true }));
+    } catch (e) {
+      console.warn("Archive PATCH failed or unsupported, applying locally:", e.message);
+    }
+  }
+  return localUpdateNote(id, { archived: true });
+}
+
+// PUBLIC_INTERFACE
+export async function unarchiveNote(id) {
+  /** Unarchive a note by id (return to active list). */
+  const nowIso = new Date().toISOString();
+  if (useApi) {
+    try {
+      const res = await fetch(`${API_BASE}/notes/${id}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ archived: false, updated_at: nowIso }),
+      });
+      if (!res.ok) throw new Error(`Failed to unarchive note: ${res.status}`);
+      const updated = await res.json();
+      return localUpdateNote(id, normalizeNoteBooleans({ ...updated, archived: false }));
+    } catch (e) {
+      console.warn("Unarchive PATCH failed or unsupported, applying locally:", e.message);
+    }
+  }
+  return localUpdateNote(id, { archived: false });
+}
+
+// PUBLIC_INTERFACE
+export async function listArchived(options = {}) {
+  /** List archived notes; supports sort, category, and query. */
+  const notes = await listNotes({ ...options, archivedMode: ARCHIVE_FILTER_MODES.archived });
+  return notes;
 }
 
 // PUBLIC_INTERFACE
@@ -786,6 +856,7 @@ function localCreateNote(payload) {
     favorite: false,
     pinnedAt: null,
     versions: [], // initialize versions history
+    archived: false,
   });
   const next = [newNote, ...state.notes];
   saveNotes(next);
@@ -836,6 +907,7 @@ function localUpdateNote(id, payload) {
     ...(payload.reminder !== undefined ? { reminder: normalizeReminder(payload.reminder) } : {}),
     ...(payload.pinned !== undefined ? { pinned: !!payload.pinned } : {}),
     ...(payload.favorite !== undefined ? { favorite: !!payload.favorite } : {}),
+    ...(payload.archived !== undefined ? { archived: !!payload.archived } : {}),
     ...(payload.pinnedAt !== undefined ? { pinnedAt: payload.pinnedAt } : pinnedAtPatch),
   };
 
@@ -849,6 +921,7 @@ function localUpdateNote(id, payload) {
       reminder: prev.reminder,
       pinned: prev.pinned,
       favorite: prev.favorite,
+      archived: prev.archived,
       pinnedAt: prev.pinnedAt,
     },
     {
@@ -859,6 +932,7 @@ function localUpdateNote(id, payload) {
       reminder: tentative.reminder,
       pinned: tentative.pinned,
       favorite: tentative.favorite,
+      archived: tentative.archived,
       pinnedAt: tentative.pinnedAt,
     }
   );
@@ -1113,6 +1187,7 @@ export async function toggleFavorite(noteId) {
 export const _internal = {
   useApi,
   DEFAULT_SORT,
+  ARCHIVE_FILTER_MODES,
   applySortFilter,
   ATTACHMENTS_LIMIT_PER_NOTE,
   ATTACHMENT_MAX_SIZE_BYTES,

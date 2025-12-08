@@ -39,6 +39,7 @@ export async function exportNoteAsPDF(note, fileNameOverride) {
   const meta = [
     note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
     note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
+    note.archived ? `Archived: yes` : null,
     Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
   ].filter(Boolean).join(' | ');
 
@@ -120,6 +121,7 @@ export async function exportAllNotesAsPDF(notes, fileName = 'notes.pdf') {
     const meta = [
       note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
       note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
+      note.archived ? `Archived: yes` : null,
       Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
     ].filter(Boolean).join(' | ');
 
@@ -199,6 +201,7 @@ export async function exportNotesAsZIP(options) {
       const meta = [
         note.created_at ? `Created: ${formatDate(note.created_at)}` : null,
         note.updated_at ? `Updated: ${formatDate(note.updated_at)}` : null,
+        note.archived ? `Archived: yes` : null,
         Array.isArray(note.tags) && note.tags.length ? `Tags: ${note.tags.join(', ')}` : null,
       ].filter(Boolean).join(' | ');
 

@@ -19,6 +19,8 @@ import {
   snoozeReminder,
   togglePin,
   toggleFavorite,
+  archiveNote,
+  unarchiveNote,
 } from "../services/notesService";
 import "./notes.css";
 import VoiceDictation from "../components/VoiceDictation";
@@ -83,6 +85,9 @@ export default function NotesPage() {
   // pin/favorite filters: "all" | "pinned" | "favorites"
   const [flagFilter, setFlagFilter] = useState(() =>
     getParamOrDefault("flag", "all")
+  );
+  const [archivedMode, setArchivedMode] = useState(() =>
+    getParamOrDefault("arch", "active")
   );
   const [searchInput, setSearchInput] = useState(() => {
     const fromUrl = getParamOrDefault("q", "");
@@ -193,6 +198,7 @@ export default function NotesPage() {
           sortBy: options?.sortBy ?? sortBy,
           category: options?.category ?? selectedCategory,
           query: options?.query ?? debouncedQuery,
+          archivedMode: options?.archivedMode ?? archivedMode,
         }),
         listCategories(),
       ]);
@@ -242,8 +248,8 @@ export default function NotesPage() {
 
   // Persist sort and category filter into URL and reload notes when changed
   useEffect(() => {
-    setUrlParams({ sort: sortBy, cat: selectedCategory, q: debouncedQuery, flag: flagFilter });
-    loadData({ sortBy, category: selectedCategory, query: debouncedQuery });
+    setUrlParams({ sort: sortBy, cat: selectedCategory, q: debouncedQuery, flag: flagFilter, arch: archivedMode });
+    loadData({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy, selectedCategory, debouncedQuery]);
 
@@ -1245,6 +1251,37 @@ export default function NotesPage() {
               </button>
             </div>
 
+            {/* Archived filter toolbar */}
+            <div className="chip-row" role="toolbar" aria-label="Archived filter">
+              <button
+                type="button"
+                className={`chip chip-action ${archivedMode === "active" ? "active" : ""}`}
+                onClick={() => setArchivedMode("active")}
+                aria-pressed={archivedMode === "active"}
+                title="Show active notes"
+              >
+                Active
+              </button>
+              <button
+                type="button"
+                className={`chip chip-action ${archivedMode === "archived" ? "active" : ""}`}
+                onClick={() => setArchivedMode("archived")}
+                aria-pressed={archivedMode === "archived"}
+                title="Show archived notes only"
+              >
+                Archived
+              </button>
+              <button
+                type="button"
+                className={`chip chip-action ${archivedMode === "all" ? "active" : ""}`}
+                onClick={() => setArchivedMode("all")}
+                aria-pressed={archivedMode === "all"}
+                title="Show all notes (active + archived)"
+              >
+                All
+              </button>
+            </div>
+
             {loading ? (
               <div className="muted">Loading…</div>
             ) : notes.length === 0 ? (
@@ -1262,10 +1299,12 @@ export default function NotesPage() {
                   .map((n) => (
                   <li key={n.id} className="note-item">
                     <div className="note-meta">
-                      <div
-                        className="note-title"
-                        dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.title, debouncedQuery) }}
-                      />
+                      <div className="note-title">
+                        <span
+                          dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.title, debouncedQuery) }}
+                        />
+                        {n.archived ? <span className="chip" style={{ marginLeft: 6 }}>Archived</span> : null}
+                      </div>
                       <div className="note-date">
                         {n.updated_at ? new Date(n.updated_at).toLocaleString() : ""}
                       </div>
@@ -1315,7 +1354,7 @@ export default function NotesPage() {
                         onClick={async () => {
                           try {
                             await togglePin(n.id);
-                            await loadData({ sortBy, category: selectedCategory, query: debouncedQuery });
+                            await loadData({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
                           } catch {}
                         }}
                         aria-label={n.pinned ? `Unpin note ${n.title}` : `Pin note ${n.title}`}
@@ -1345,6 +1384,29 @@ export default function NotesPage() {
                         type="button"
                       >
                         Edit
+                      </button>
+                      <button
+                        className="btn"
+                        onClick={async () => {
+                          try {
+                            if (n.archived) {
+                              await unarchiveNote(n.id);
+                            } else {
+                              await archiveNote(n.id);
+                            }
+                            await loadData({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
+                            setFeedback({ type: "success", message: n.archived ? "Note unarchived." : "Note archived." });
+                            resetFeedbackSoon();
+                          } catch (e) {
+                            setFeedback({ type: "error", message: e?.message || "Failed to change archive state." });
+                            resetFeedbackSoon();
+                          }
+                        }}
+                        aria-label={n.archived ? `Unarchive note ${n.title}` : `Archive note ${n.title}`}
+                        type="button"
+                        title={n.archived ? "Unarchive" : "Archive"}
+                      >
+                        {n.archived ? "Unarchive" : "Archive"}
                       </button>
                       <button
                         className="btn btn-danger"
@@ -1731,7 +1793,7 @@ export default function NotesPage() {
                     onClick={async () => {
                       try {
                         await togglePin(editingNote.id);
-                        const refreshed = await listNotes({ sortBy, category: selectedCategory, query: debouncedQuery });
+                        const refreshed = await listNotes({ sortBy, category: selectedCategory, query: debouncedQuery, archivedMode });
                         setNotes(refreshed);
                         setEditingNote((prev) => prev ? { ...prev, pinned: !prev.pinned, pinnedAt: !prev.pinned ? new Date().toISOString() : null } : prev);
                       } catch {}

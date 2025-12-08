@@ -167,6 +167,7 @@ export function restoreFromBackupId(backupId) {
         ...n,
         pinned: !!n.pinned,
         favorite: !!n.favorite,
+        archived: !!n.archived,
         pinnedAt: n.pinned ? (n.pinnedAt ? new Date(n.pinnedAt).toISOString() : (n.updated_at || n.created_at || new Date().toISOString())) : null,
         categories: Array.isArray(n.categories) ? n.categories : [],
         attachments: Array.isArray(n.attachments) ? n.attachments : [],
