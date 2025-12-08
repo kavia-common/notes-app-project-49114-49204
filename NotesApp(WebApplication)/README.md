@@ -15,9 +15,10 @@ Alternative:
 - Start frontend only: npm run dev
 
 Environment:
+- Copy .env.example to .env and adjust as needed
 - Uses REACT_APP_* variables from .env
 - Binds to port REACT_APP_PORT (default 3000) and host 0.0.0.0
 - Backend port configured via BACKEND_PORT (default 5179)
 
 Health:
-- Frontend reports backend status by calling /healthz (proxied to backend). When backend is running, it should show "backend: ok".
+- Frontend reports backend status by calling /healthz (proxied to backend). When backend is running, it should show "backend: healthy".

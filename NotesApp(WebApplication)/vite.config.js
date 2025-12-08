@@ -12,6 +12,17 @@ export default defineConfig(({ mode }) => {
   /** Determine backend port used in proxy; default 5179 */
   const backendPort = Number(process.env.BACKEND_PORT || 5179);
 
+  /** Dynamically allow the current host for preview environments */
+  const allowedHosts = [];
+  if (process.env.PREVIEW_HOST) {
+    allowedHosts.push(process.env.PREVIEW_HOST);
+  } else if (process.env.HOSTNAME) {
+    allowedHosts.push(process.env.HOSTNAME);
+  } else {
+    // Fallback to previously known preview host; harmless if not present
+    allowedHosts.push('vscode-internal-31398-qa.qa01.cloud.kavia.ai');
+  }
+
   return {
     plugins: [react()],
     server: {
@@ -19,7 +30,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      allowedHosts: ['vscode-internal-31398-qa.qa01.cloud.kavia.ai'],
+      allowedHosts,
       proxy: {
         // Proxy backend health and API calls to FastAPI during development
         '^/(healthz|api)(/.*)?$': {
@@ -33,12 +44,12 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      allowedHosts: ['vscode-internal-31398-qa.qa01.cloud.kavia.ai']
+      allowedHosts
     },
     define: {
       // PUBLIC_INTERFACE
       __APP_CONFIG__: JSON.stringify({
-        API_BASE: env.REACT_APP_API_BASE || '/api',
+        API_BASE: env.REACT_APP_API_BASE || '/api', // ensure relative path -> Vite proxy
         BACKEND_URL: env.REACT_APP_BACKEND_URL || '', // Prefer relative path via proxy in dev
         FRONTEND_URL: env.REACT_APP_FRONTEND_URL || '',
         WS_URL: env.REACT_APP_WS_URL || '',

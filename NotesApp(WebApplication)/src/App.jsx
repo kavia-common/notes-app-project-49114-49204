@@ -24,7 +24,7 @@ export default function App() {
       .then(async (r) => {
         if (cancelled) return;
         if (r.ok) {
-          setHealth('backend: ok');
+          setHealth('backend: healthy');
         } else {
           setHealth(`backend: fail (${r.status})`);
         }
