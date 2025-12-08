@@ -154,6 +154,41 @@ Extending with custom templates (developers):
   - Keep HTML limited to allowed tags: b, strong, i, em, u, code, br, p, div, span.
 - The Template Picker automatically lists all entries in NOTE_TEMPLATES.
 
+## Character & Word Count
+
+The app shows live character and word counts in all authoring surfaces.
+
+Where it appears:
+- Create editor (toolbar/footer under the content editor)
+- Edit modal editor (footer under the editor)
+- Quick Add popup (compact counter near the textarea)
+
+Behavior:
+- Words are sequences of non-whitespace characters separated by whitespace.
+- Characters count visible text after stripping HTML tags (the editor stores sanitized HTML, counters ignore tags).
+- Counts update as you type and are efficiently computed (~100ms work using a lightweight utility).
+- Screen readers get polite announcements of updated counts at most once per second to avoid verbosity (aria-live='polite').
+
+Locked notes:
+- Edit modal shows “Locked” in place of counts if a note is locked and not unlocked for the session.
+- When unlocked (decrypted), counts are computed from the decrypted visible text.
+
+Quick Add limits:
+- If a character limit is configured via REACT_APP_QUICK_ADD_MAX_LENGTH (default 280), the counter shows “current/limit (words)”.
+- The content is validated against the limit on submit.
+
+Configuration tips:
+- REACT_APP_QUICK_ADD_MAX_LENGTH=280 to change Quick Add character budget.
+- REACT_APP_AUTOSAVE_DEBOUNCE_MS controls autosave debounce; counters are separate and won’t interfere.
+
+Implementation details:
+- Utility at src/utils/textMetrics.js exports:
+  - stripHtml(input)
+  - countWords(text)
+  - countChars(text)
+  - getTextMetricsFromHtml(html) -> { words, chars }
+- Live announcements are throttled to avoid noisy screen reader output.
+
 ## Undo / Redo
 
 Editors now support undo/redo with toolbar buttons and keyboard shortcuts.

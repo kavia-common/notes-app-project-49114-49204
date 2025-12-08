@@ -37,6 +37,7 @@ import NoteCount from "../components/NoteCount";
 import SuccessToast from "../components/SuccessToast";
 import QuickAddNote from "../components/QuickAddNote";
 import FontSizeSelector from "../components/FontSizeSelector";
+import { getTextMetricsFromHtml, throttleAnnouncements } from "../utils/textMetrics";
 import { NOTE_TEMPLATES, getTemplateById } from "../templates/templates";
 import {
   exportAllNotesAsTXT,
@@ -188,6 +189,12 @@ export default function NotesPage() {
   // Rich-text editor refs
   const createEditorRef = useRef(null);
   const editEditorRef = useRef(null);
+
+  // Live text metrics state
+  const [createMetrics, setCreateMetrics] = useState({ words: 0, chars: 0 });
+  const [editMetrics, setEditMetrics] = useState({ words: 0, chars: 0 });
+  const metricsLiveRef = useRef(null);
+  const announceMetricsRef = useRef(null);
 
   // Undo/Redo ARIA live region
   const historyAriaRef = useRef(null);
@@ -372,6 +379,16 @@ export default function NotesPage() {
     return hist.index >= 0 && hist.index < hist.stack.length - 1;
   }
 
+  // Initialize announcement throttler for metrics (polite, at most once per second)
+  useEffect(() => {
+    announceMetricsRef.current = throttleAnnouncements((msg) => {
+      if (metricsLiveRef.current) metricsLiveRef.current.textContent = msg;
+    }, 1000);
+    return () => {
+      announceMetricsRef.current = null;
+    };
+  }, []);
+
   // Initialize editor contents from state when opening/typing
   useEffect(() => {
     // Set sanitized HTML when content state changes (Create)
@@ -382,6 +399,9 @@ export default function NotesPage() {
         // Seed/Update history after programmatic changes if meaningful
         pushHistorySnapshot({ isEdit: false, reason: "state-sync" });
       }
+      // Update metrics based on sanitized HTML
+      const m = getTextMetricsFromHtml(sanitized);
+      setCreateMetrics({ words: m.words, chars: m.chars });
     }
   }, [content]);
 
@@ -393,6 +413,8 @@ export default function NotesPage() {
         editEditorRef.current.innerHTML = sanitized || "";
         pushHistorySnapshot({ isEdit: true, reason: "state-sync" });
       }
+      const m = getTextMetricsFromHtml(sanitized);
+      setEditMetrics({ words: m.words, chars: m.chars });
     }
   }, [editContent, editingNote]);
 
@@ -551,6 +573,10 @@ export default function NotesPage() {
     setContent(safe);
     // snapshot throttled
     pushHistorySnapshot({ isEdit: false, reason: "input" });
+    // update metrics and announce (polite, throttled)
+    const m = getTextMetricsFromHtml(safe);
+    setCreateMetrics({ words: m.words, chars: m.chars });
+    announceMetricsRef.current?.(`${m.words} words • ${m.chars} characters`);
     // schedule debounced autosave
     autoSaveDebouncerRef.current?.({ title, content: safe, backgroundColor: newBackgroundColor || null });
     if (!isOnline()) saveDraftToLocal(autoSavedNoteId, { title, content: safe });
@@ -563,6 +589,9 @@ export default function NotesPage() {
     const safe = sanitizeHtml(raw);
     setEditContent(safe);
     pushHistorySnapshot({ isEdit: true, reason: "input" });
+    const m = getTextMetricsFromHtml(safe);
+    setEditMetrics({ words: m.words, chars: m.chars });
+    announceMetricsRef.current?.(`${m.words} words • ${m.chars} characters`);
   }
 
   // HTML sanitization
@@ -1748,7 +1777,12 @@ export default function NotesPage() {
                   onKeyDown={handleEditorKeyDown}
                   data-placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
-
+                {/* Metrics footer for Create editor */}
+                <div className="editor-metrics" aria-label="Text metrics">
+                  <span className="metrics-text" title="Word and character count">
+                    {`${createMetrics.words} words • ${createMetrics.chars} characters`}
+                  </span>
+                </div>
               </div>
               <div className="form-row">
                 <label htmlFor="note-color">Background color</label>
@@ -2380,6 +2414,8 @@ export default function NotesPage() {
 
       {/* ARIA live region for history announcements */}
       <div ref={historyAriaRef} className="visually-hidden" aria-live="polite" role="status" />
+      {/* ARIA live region for metrics announcements (polite, throttled) */}
+      <div ref={metricsLiveRef} className="visually-hidden" aria-live="polite" role="status" />
 
       {confirmDeleteId !== null && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -2577,6 +2613,14 @@ export default function NotesPage() {
                   onKeyDown={(e) => handleEditorKeyDown(e, true)}
                   data-placeholder={isListeningEdit ? "Listening… speak now. Your words will appear here." : "Write something..."}
                 />
+                {/* Metrics footer for Edit editor */}
+                <div className="editor-metrics" aria-label="Text metrics">
+                  <span className="metrics-text" title="Word and character count">
+                    {editingNote && editingNote.lock?.isLocked && isNoteLocked(editingNote)
+                      ? "Locked"
+                      : `${editMetrics.words} words • ${editMetrics.chars} characters`}
+                  </span>
+                </div>
               </div>
               <div className="form-row">
                 <label htmlFor="edit-color">Background color</label>

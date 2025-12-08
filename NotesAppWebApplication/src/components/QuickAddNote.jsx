@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import DOMPurify from "dompurify";
 import { debounce } from "../utils/debounce";
 import { hasDuplicateTitle } from "../utils/titleUtils";
+import { stripHtml as stripHtmlMetrics, getTextMetricsFromHtml, throttleAnnouncements } from "../utils/textMetrics";
 
 /**
  * PUBLIC_INTERFACE
@@ -27,6 +28,9 @@ export default function QuickAddNote({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [backgroundColor, setBackgroundColor] = useState("");
+  const [metrics, setMetrics] = useState({ words: 0, chars: 0 });
+  const countsLiveRef = useRef(null);
+  const announceCountsRef = useRef(null);
 
   // duplicate warning state
   const [dupWarn, setDupWarn] = useState({ isDup: false, msg: "" });
@@ -52,6 +56,14 @@ export default function QuickAddNote({
     };
   }, [notes]);
 
+  // Initialize throttled announcer for counters
+  useEffect(() => {
+    announceCountsRef.current = throttleAnnouncements((msg) => {
+      if (countsLiveRef.current) countsLiveRef.current.textContent = msg;
+    }, 1000);
+    return () => { announceCountsRef.current = null; };
+  }, []);
+
   // Load draft on open; focus first input; remember last active element
   useEffect(() => {
     if (isOpen) {
@@ -62,6 +74,8 @@ export default function QuickAddNote({
           const d = JSON.parse(raw);
           setTitle(d.title || "");
           setContent(d.content || "");
+          const m = getTextMetricsFromHtml(d.content || "");
+          setMetrics({ words: m.words, chars: m.chars });
         }
       } catch {
         // ignore
@@ -94,6 +108,11 @@ export default function QuickAddNote({
     } catch {
       // ignore quota
     }
+    // update metrics on content changes
+    try {
+      const m = getTextMetricsFromHtml(content || "");
+      setMetrics({ words: m.words, chars: m.chars });
+    } catch {}
   }, [isOpen, title, content]);
 
   // Clear draft on successful submit or explicit close
@@ -278,7 +297,13 @@ export default function QuickAddNote({
               id="quickadd-input-content"
               data-focus-first
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setContent(v);
+                const m = getTextMetricsFromHtml(v);
+                setMetrics({ words: m.words, chars: m.chars });
+                announceCountsRef.current?.(`${m.words} words • ${m.chars} characters`);
+              }}
               placeholder="Write a quick note…"
               rows={4}
               maxLength={undefined /* we enforce manually to allow counter */}
@@ -286,8 +311,11 @@ export default function QuickAddNote({
               required
             />
             <div id="quickadd-counter" className={`muted quickadd-counter${remaining === 0 ? " limit-reached" : ""}`}>
-              {maxLength ? `${remaining} characters remaining` : `${stripHtml(content).length} characters`}
+              {maxLength
+                ? `${metrics.chars}/${maxLength} (${metrics.words} words)`
+                : `${metrics.words} words • ${metrics.chars} characters`}
             </div>
+            <div ref={countsLiveRef} className="visually-hidden" aria-live="polite" role="status" />
             {error ? <div role="alert" className="feedback error" style={{ marginTop: 6 }}>{error}</div> : null}
           </div>
           <div className="modal-actions" style={{ justifyContent: "space-between" }}>
@@ -336,10 +364,8 @@ function defaultSanitize(html) {
 }
 
 function stripHtml(s) {
-  if (!s) return "";
-  const div = document.createElement("div");
-  div.innerHTML = s;
-  return div.textContent || div.innerText || "";
+  // Keep legacy callers; delegate to shared util to ensure consistent behavior.
+  return stripHtmlMetrics(s);
 }
 
 function autoTitleFromContent(text) {

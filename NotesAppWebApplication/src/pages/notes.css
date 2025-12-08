@@ -404,6 +404,17 @@ input[type="text"]:focus, textarea:focus, select:focus {
   font-size: calc(0.95em * var(--font-scale, 1));
 }
 
+/* Editor metrics footer */
+.editor-metrics {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.metrics-text {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* Icon-like buttons for pin/favorite */
 .icon-btn {
   background: transparent;
