@@ -1,0 +1,42 @@
+{
+  "name": "react-kavia",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "canvg": "^3.0.11",
+    "dompurify": "^3.0.6",
+    "jspdf": "^2.5.2",
+    "jszip": "^3.10.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "^5.0.1"
+  },
+  "scripts": {
+    "start": "node scripts/dev.cjs",
+    "dev": "node scripts/dev.cjs",
+    "start:dev": "npm run dev",
+    "build": "react-scripts build",
+    "test": "react-scripts test --watchAll=false",
+    "eject": "react-scripts eject",
+    "postinstall": "node -e \"console.log('postinstall: ensuring deps ready')\"",
+    "healthcheck": "node -e \"process.stdout.write('ok')\""
+  },
+  "eslintConfig": {
+    "extends": "react-app"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}
