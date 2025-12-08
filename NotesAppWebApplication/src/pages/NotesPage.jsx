@@ -11,7 +11,7 @@ import {
   _internal,
   uploadAttachment,
   deleteAttachment,
-  setReminder,
+
   clearReminder,
   listDueReminders,
   markDueAsFired,
@@ -41,7 +41,7 @@ import {
   getLatestBackupMeta,
   backupNow as backupNowSvc,
   restoreFromLatest as restoreFromLatestSvc,
-  restoreFromBackupId as restoreFromBackupIdSvc,
+
   scheduleAutomaticBackupsDaily,
   exportLatestBackupToFile,
   importBackupFromFile,
@@ -329,73 +329,7 @@ export default function NotesPage() {
     resetFeedbackSoon._t = window.setTimeout(() => setFeedback(null), 2500);
   }
 
-  async function handleBackupNow() {
-    try {
-      setBackingUp(true);
-      const meta = backupNowSvc({ source: "manual" });
-      setBackups(listBackups());
-      setLatestBackup(getLatestBackupMeta());
-      setFeedback({ type: "success", message: `Backup created (${meta.count} notes).` });
-      resetFeedbackSoon();
-    } catch (e) {
-      setFeedback({ type: "error", message: e?.message || "Failed to create backup." });
-      resetFeedbackSoon();
-    } finally {
-      setBackingUp(false);
-    }
-  }
 
-  async function handleRestoreLatestConfirmed() {
-    try {
-      setRestoring(true);
-      const result = restoreFromLatestSvc();
-      // reload notes/categories from restored state
-      await loadData();
-      setBackups(listBackups());
-      setLatestBackup(getLatestBackupMeta());
-      setFeedback({ type: "success", message: `Restored ${result.restored} notes.` });
-      resetFeedbackSoon();
-      setConfirmRestoreOpen(false);
-    } catch (e) {
-      setFeedback({ type: "error", message: e?.message || "Failed to restore backup." });
-      resetFeedbackSoon();
-    } finally {
-      setRestoring(false);
-    }
-  }
-
-  function handleDownloadBackup() {
-    try {
-      const meta = exportLatestBackupToFile();
-      setBackups(listBackups());
-      setLatestBackup(getLatestBackupMeta());
-      setFeedback({ type: "success", message: `Backup downloaded (${meta.count} notes).` });
-      resetFeedbackSoon();
-    } catch (e) {
-      setFeedback({ type: "error", message: e?.message || "Failed to download backup." });
-      resetFeedbackSoon();
-    }
-  }
-
-  async function handleUploadBackup(e) {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    try {
-      setImporting(true);
-      const meta = await importBackupFromFile(file);
-      setBackups(listBackups());
-      setLatestBackup(getLatestBackupMeta());
-      setFeedback({ type: "success", message: `Backup imported (${meta.count} notes). You can now Restore from latest.` });
-      resetFeedbackSoon();
-      e.target.value = "";
-    } catch (err) {
-      setFeedback({ type: "error", message: err?.message || "Invalid backup file." });
-      resetFeedbackSoon();
-      e.target.value = "";
-    } finally {
-      setImporting(false);
-    }
-  }
 
   async function handleBackupNow() {
     try {
@@ -571,7 +505,7 @@ export default function NotesPage() {
       setFeedback({ type: "error", message: e?.message || "Failed to create note from speech." });
       resetFeedbackSoon();
     }
-  }, [debouncedQuery, selectedCategory, sortBy]);
+  }, [debouncedQuery, selectedCategory, sortBy, resetFeedbackSoon]);
   
   async function handleCreate(e) {
     e.preventDefault();
@@ -957,14 +891,14 @@ export default function NotesPage() {
         <aside className="sidebar">
           <div className="sidebar-section">
             <div className="sidebar-title">Folders</div>
-            <ul className="category-list" role="listbox" aria-label="Category filter">
+            <ul className="category-list" aria-label="Category filter">
               {visibleCategories.map((c) => (
                 <li key={c}>
                   <button
                     type="button"
                     className={`category-item ${selectedCategory === c ? "active" : ""}`}
                     onClick={() => setSelectedCategory(c)}
-                    aria-selected={selectedCategory === c}
+                    aria-pressed={selectedCategory === c}
                   >
                     {c === "all" ? "All Notes" : c}
                   </button>

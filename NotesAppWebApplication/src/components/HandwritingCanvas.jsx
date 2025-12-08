@@ -58,7 +58,7 @@ const HandwritingCanvas = forwardRef(function HandwritingCanvas(
     ctx.fillRect(0, 0, displayWidth, displayHeight);
     ctx.restore();
     redrawAll();
-  }, [width, height, devicePixelRatio, backgroundColor]);
+  }, [width, height, devicePixelRatio, backgroundColor, redrawAll]);
 
   const drawStroke = (ctx, stroke) => {
     if (!stroke || !stroke.points || stroke.points.length === 0) return;

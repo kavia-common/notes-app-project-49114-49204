@@ -47,5 +47,16 @@ Retention policy:
 - npm install
 - npm start
 
+The dev server is launched via scripts/dev.cjs which maps flags and env vars:
+- Host binding: HOST or REACT_APP_HOST, default 0.0.0.0
+- Port: PORT or REACT_APP_PORT, default 3000
+Examples:
+- HOST=0.0.0.0 PORT=3000 npm start
+- npm start -- --host 0.0.0.0 --port 3000
+
+Healthcheck:
+- A static healthcheck file is available at /healthz.txt (served from public/healthz.txt) returning "ok".
+- Configure your preview/proxy to check http://<host>:3000/healthz.txt
+
 ## Testing
 - npm test

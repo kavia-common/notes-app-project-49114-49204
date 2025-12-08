@@ -1,6 +1,4 @@
-import {
-  _internal as notesInternal,
-} from "./notesService";
+
 
 //
 // Backup service for frontend-only mode.

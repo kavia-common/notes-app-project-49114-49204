@@ -946,10 +946,7 @@ export async function deleteAttachment(noteId, attachmentId) {
 
 /* ===== Local store implementations ===== */
 
-function localListNotes() {
-  const state = ensureState();
-  return Promise.resolve(state.notes);
-}
+
 
 function localCreateNote(payload) {
   const state = ensureState();

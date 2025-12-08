@@ -326,7 +326,7 @@ function triggerDownloadFromBlob(blob, fileName) {
 
 function sanitizeFileName(name) {
   return (name || 'file')
-    .replace(/[<>:":/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[<>:\"/\\|?*\\x00-\\x1F]/g, '_')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 200);

@@ -14,7 +14,7 @@ import {
   idbUpsertNote,
   idbDeleteNoteById,
   idbSaveNotes,
-  idbGetMeta,
+
   idbSetMeta,
 } from './indexedDb';
 import { fetchNotes, createNote, updateNote, deleteNote as apiDeleteNote, archiveNote, unarchiveNote } from './notesService';
