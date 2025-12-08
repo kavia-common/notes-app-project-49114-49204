@@ -30,6 +30,7 @@ import VoiceDictation from "../components/VoiceDictation";
 import ConnectivityStatus from "../components/ConnectivityStatus";
 import HandwritingCanvas from "../components/HandwritingCanvas";
 import NoteCount from "../components/NoteCount";
+import SuccessToast from "../components/SuccessToast";
 import { NOTE_TEMPLATES, getTemplateById } from "../templates/templates";
 import {
   exportAllNotesAsTXT,
@@ -97,6 +98,22 @@ export default function NotesPage() {
 
   // Toast notifications queue (in-app)
   const [toasts, setToasts] = useState([]);
+
+  // Success toast state (for save success)
+  const [saveSuccessToast, setSaveSuccessToast] = useState({
+    visible: false,
+    message: "",
+  });
+  const showSaveSuccess = useCallback((msg = "Note saved successfully") => {
+    // Coalesce: if already visible with same message, just refresh visibility to reset timer.
+    setSaveSuccessToast((prev) => ({
+      visible: true,
+      message: msg || prev.message || "Note saved successfully",
+    }));
+  }, []);
+  const hideSaveSuccess = useCallback(() => {
+    setSaveSuccessToast({ visible: false, message: "" });
+  }, []);
 
   // Sorting and filter state (persist to URL)
   const [sortBy, setSortBy] = useState(() => getParamOrDefault("sort", _internal.DEFAULT_SORT));
@@ -355,6 +372,8 @@ export default function NotesPage() {
           );
           setAutoSaveStatus("saved");
           clearDraftFromLocal(autoSavedNoteId);
+          // Show success toast for autosave update
+          showSaveSuccess("Note saved successfully");
         } else {
           // First create only when both have some content (title or content non-empty)
           const created = await createNote({ ...payload });
@@ -370,6 +389,8 @@ export default function NotesPage() {
           );
           setAutoSaveStatus("saved");
           clearDraftFromLocal(null);
+          // Show success toast for first autosave create
+          showSaveSuccess("Note saved successfully");
         }
       } catch (e) {
         // Network/server error -> cache offline and show offline status
@@ -406,6 +427,8 @@ export default function NotesPage() {
           }
           clearDraftFromLocal(autoSavedNoteId);
           setAutoSaveStatus("saved");
+          // Success on background sync of cached autosave
+          showSaveSuccess("Note saved successfully");
           await backgroundSync();
         } catch {
           // keep offline status; will retry later
@@ -882,6 +905,8 @@ export default function NotesPage() {
       setReminderTime("");
       setReminderRepeat("none");
       setFeedback({ type: "success", message: "Note created." });
+      // Also show success toast for manual create
+      showSaveSuccess("Note saved successfully");
       // refresh categories list
       const cats = await listCategories();
       setCategories(cats);
@@ -1007,6 +1032,8 @@ export default function NotesPage() {
         });
       });
       setFeedback({ type: "success", message: "Note updated." });
+      // Also show success toast for manual update
+      showSaveSuccess("Note saved successfully");
       resetFeedbackSoon();
       closeEdit();
       const cats = await listCategories();
@@ -1828,6 +1855,13 @@ export default function NotesPage() {
           </div>
         ))}
       </div>
+
+      {/* Lightweight success toast (separate from reminder toasts to avoid conflicts) */}
+      <SuccessToast
+        message={saveSuccessToast.message}
+        visible={saveSuccessToast.visible}
+        onHide={hideSaveSuccess}
+      />
 
       {confirmDeleteId !== null && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

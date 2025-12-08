@@ -422,6 +422,33 @@ input[type="text"]:focus, textarea:focus, select:focus {
   justify-content: flex-end;
 }
 
+/* Success toast (lightweight banner) */
+.success-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  background: rgba(16,185,129,0.15);
+  border: 1px solid rgba(16,185,129,0.35);
+  color: var(--text-primary);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 60; /* above reminder toasts */
+  box-shadow: 0 8px 18px rgba(0,0,0,0.12);
+}
+
+.success-toast__icon {
+  color: #16a34a;
+  font-weight: 900;
+}
+
+.success-toast__msg {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 /* Versions panel */
 .versions-panel {
   margin-top: 8px;

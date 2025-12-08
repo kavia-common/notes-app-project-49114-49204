@@ -46,12 +46,22 @@ Retention policy:
 ## Auto-save
 
 - The editor automatically saves your note as you type using a debounced request (default 1000ms after you stop typing).
+- On successful auto-save or manual save, a lightweight success toast appears for a short duration to confirm the save (see “Save success feedback” below).
 - If the note has not been created yet, the first auto-save will create it; further edits will update the same note.
 - Status is shown inline near the editor: “Saving…”, “Saved”, or “Offline - changes will sync”.
 - Offline: When there’s no connectivity, your latest changes are cached locally (localStorage) under a key like `autosave_note_<id|new>` and retried when you come back online.
 - Validation: Completely empty notes (both title and content empty) are not saved.
 - Debounce interval can be configured via environment variable:
   - REACT_APP_AUTOSAVE_DEBOUNCE_MS (milliseconds, default 1000)
+
+## Save success feedback
+
+- After a successful save (auto-save or manual save), the app displays a small, non-intrusive success toast saying “Note saved successfully”.
+- The toast is an ARIA live polite region for accessibility and auto-hides after about 2 seconds by default.
+- Rapid consecutive auto-saves will not spam multiple toasts; the same message is coalesced by refreshing the timer.
+- Duration can be configured with the environment variable:
+  - REACT_APP_SAVE_SUCCESS_TOAST_MS (milliseconds, default 2000)
+- The success toast does not replace existing inline statuses (“Saving…”, “Saved”, “Offline - changes will sync”); it is additive user feedback placed at the bottom-right.
 
 ## Templates
 
