@@ -2,6 +2,7 @@
 // Notes service: switches between API-backed and local in-memory storage
 // Adds categories/folders and sorting/filtering with local persistence and migration.
 // Adds attachments support with local data URL persistence and API stubs.
+// Adds reminders with local scheduler helpers and API stubs.
 //
 const API_BASE =
   process.env.REACT_APP_API_BASE ||
@@ -38,7 +39,13 @@ const MIGRATION_FLAG = "notes.migrated.v2";
  *   notes: [{
  *     id, title, content, created_at, updated_at,
  *     categories?: string[],
- *     attachments?: [{id, type, name, size, mime, url, createdAt}]
+ *     attachments?: [{id, type, name, size, mime, url, createdAt}],
+ *     reminder?: {
+ *       reminderAt?: string, // ISO
+ *       reminderId?: string,
+ *       reminderStatus?: 'pending'|'fired'|'dismissed'|'snoozed',
+ *       repeat?: 'none'|'daily'|'weekly'
+ *     }
  *   }],
  *   categories: string[]
  * }
@@ -65,6 +72,7 @@ function readLocalState() {
         ...n,
         categories: Array.isArray(n.categories) ? n.categories : [],
         attachments: Array.isArray(n.attachments) ? n.attachments : [],
+        reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
       }));
       parsed.categories = Array.isArray(parsed.categories)
         ? Array.from(new Set(parsed.categories))
@@ -100,6 +108,7 @@ function migrateIfNeeded() {
           ...n,
           categories: Array.isArray(n.categories) ? n.categories : [],
           attachments: Array.isArray(n.attachments) ? n.attachments : [],
+          reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
         })),
         categories: [],
       };
@@ -239,6 +248,7 @@ export async function listNotes(options = {}) {
             ...n,
             categories: Array.isArray(n.categories) ? n.categories : [],
             attachments: Array.isArray(n.attachments) ? n.attachments : [],
+            reminder: n.reminder ? normalizeReminder(n.reminder) : undefined,
           }))
         : [];
       return applySortFilter(normalized, options);
@@ -311,19 +321,20 @@ export async function createNote(note) {
         ...created,
         categories: Array.isArray(created.categories) ? created.categories : [],
         attachments: Array.isArray(created.attachments) ? created.attachments : [],
+        reminder: created.reminder ? normalizeReminder(created.reminder) : undefined,
       };
     } catch (e) {
       console.warn("Falling back to local create due to API error:", e.message);
-      return localCreateNote({ ...payload, attachments: note.attachments || [] });
+      return localCreateNote({ ...payload, attachments: note.attachments || [], reminder: note.reminder });
     }
   }
-  return localCreateNote({ ...payload, attachments: note.attachments || [] });
+  return localCreateNote({ ...payload, attachments: note.attachments || [], reminder: note.reminder });
 }
 
 /** PUBLIC_INTERFACE */
 export async function updateNote(id, note) {
   /**
-   * Update a note by id with {title?, content?, categories?, attachments?}; API if available, else local.
+   * Update a note by id with {title?, content?, categories?, attachments?, reminder?}; API if available, else local.
    * For API path, attachments should be managed by upload/deleteAttachment endpoints, so we ignore attachments array here.
    */
   const payload = {
@@ -337,6 +348,7 @@ export async function updateNote(id, note) {
       : note.attachments !== undefined
       ? { attachments: Array.isArray(note.attachments) ? note.attachments : [] }
       : {}),
+    ...(note.reminder !== undefined ? { reminder: normalizeReminder(note.reminder) } : {}),
   };
   if (useApi) {
     try {
@@ -351,6 +363,7 @@ export async function updateNote(id, note) {
         ...updated,
         categories: Array.isArray(updated.categories) ? updated.categories : [],
         attachments: Array.isArray(updated.attachments) ? updated.attachments : [],
+        reminder: updated.reminder ? normalizeReminder(updated.reminder) : undefined,
       };
     } catch (e) {
       console.warn("Falling back to local update due to API error:", e.message);
@@ -516,6 +529,7 @@ function localCreateNote(payload) {
     content: payload.content,
     categories: Array.isArray(payload.categories) ? payload.categories : [],
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+    reminder: payload.reminder ? normalizeReminder(payload.reminder) : undefined,
     created_at: now,
     updated_at: now,
   };
@@ -552,6 +566,7 @@ function localUpdateNote(id, payload) {
     ...(payload.attachments !== undefined
       ? { attachments: Array.isArray(payload.attachments) ? payload.attachments : [] }
       : {}),
+    ...(payload.reminder !== undefined ? { reminder: normalizeReminder(payload.reminder) } : {}),
     updated_at: now,
   };
   const next = [...state.notes];
@@ -562,6 +577,198 @@ function localUpdateNote(id, payload) {
     saveCategoriesList([...(state.categories || []), ...payload.categories]);
   }
   return Promise.resolve(updated);
+}
+
+// ===== Reminders: model, persistence, scheduler, API stubs =====
+
+/**
+ * Normalize reminder object to expected shape.
+ * reminder: {
+ *   reminderAt?: ISO string,
+ *   reminderId?: string,
+ *   reminderStatus?: 'pending'|'fired'|'dismissed'|'snoozed',
+ *   repeat?: 'none'|'daily'|'weekly'
+ * }
+ */
+function normalizeReminder(rem) {
+  if (!rem) return undefined;
+  const out = { ...rem };
+  if (out.reminderAt) {
+    const d = new Date(out.reminderAt);
+    if (isNaN(d.getTime())) {
+      delete out.reminderAt;
+    } else {
+      out.reminderAt = d.toISOString();
+    }
+  }
+  if (!out.repeat) out.repeat = "none";
+  if (!out.reminderStatus) out.reminderStatus = "pending";
+  if (!out.reminderId) out.reminderId = `rem_${Math.random().toString(36).slice(2, 10)}`;
+  return out;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Set a reminder on a note. Validates that reminderAt is in the future.
+ */
+export async function setReminder(noteId, reminder) {
+  const norm = normalizeReminder(reminder);
+  if (!norm?.reminderAt) {
+    throw new Error("Reminder time is required");
+  }
+  const now = Date.now();
+  const ts = new Date(norm.reminderAt).getTime();
+  if (isNaN(ts) || ts <= now) {
+    throw new Error("Reminder time must be in the future");
+  }
+
+  if (useApi) {
+    // Best-effort API stub, fallback to local
+    try {
+      const res = await fetch(`${API_BASE}/notes/${noteId}/reminders`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(norm),
+      });
+      if (!res.ok) throw new Error(`Failed to set reminder: ${res.status}`);
+      const data = await res.json();
+      return localUpdateNote(noteId, { reminder: normalizeReminder(data) });
+    } catch (e) {
+      console.warn("Reminder API unavailable; using local:", e.message);
+    }
+  }
+  return localUpdateNote(noteId, { reminder: norm });
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Clear a reminder from a note.
+ */
+export async function clearReminder(noteId) {
+  if (useApi) {
+    try {
+      const res = await fetch(`${API_BASE}/notes/${noteId}/reminders`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`Failed to clear reminder: ${res.status}`);
+    } catch (e) {
+      console.warn("Reminder DELETE stub failed, proceeding local:", e.message);
+    }
+  }
+  return localUpdateNote(noteId, { reminder: undefined });
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * List reminders that are due at or before passed time for local mode.
+ * Returns array of { note, reminder }
+ */
+export async function listDueReminders(nowIso) {
+  const nowTs = nowIso ? new Date(nowIso).getTime() : Date.now();
+  const state = ensureState();
+  const due = [];
+  for (const n of state.notes) {
+    const r = n.reminder;
+    if (!r || !r.reminderAt) continue;
+    const ts = new Date(r.reminderAt).getTime();
+    if (!isNaN(ts) && ts <= nowTs && (r.reminderStatus === "pending" || r.reminderStatus === "snoozed")) {
+      due.push({ note: n, reminder: r });
+    }
+  }
+  return due;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Mark a reminder as dismissed.
+ */
+export async function dismissReminder(noteId) {
+  const state = ensureState();
+  const idx = state.notes.findIndex((n) => String(n.id) === String(noteId));
+  if (idx === -1) throw new Error("Note not found");
+  const n = state.notes[idx];
+  if (!n.reminder) return n;
+  const updated = { ...n, reminder: { ...n.reminder, reminderStatus: "dismissed" } };
+  const next = [...state.notes];
+  next[idx] = updated;
+  saveNotes(next);
+  return updated;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Snooze a reminder by minutes; updates reminderAt and sets status "snoozed".
+ */
+export async function snoozeReminder(noteId, minutes = 5) {
+  const state = ensureState();
+  const idx = state.notes.findIndex((nn) => String(nn.id) === String(noteId));
+  if (idx === -1) throw new Error("Note not found");
+  const n = state.notes[idx];
+  if (!n.reminder?.reminderAt) throw new Error("No reminder to snooze");
+  const baseTs = Date.now();
+  const nextAt = new Date(baseTs + minutes * 60 * 1000).toISOString();
+  const updated = {
+    ...n,
+    reminder: {
+      ...n.reminder,
+      reminderAt: nextAt,
+      reminderStatus: "snoozed",
+    },
+    updated_at: new Date().toISOString(),
+  };
+  const next = [...state.notes];
+  next[idx] = updated;
+  saveNotes(next);
+  return updated;
+}
+
+/**
+ * INTERNAL: When a reminder fires and has a repeat rule, compute the next reminderAt.
+ */
+function computeNextRepeat(reminder) {
+  if (!reminder?.repeat || reminder.repeat === "none") return null;
+  const base = new Date(reminder.reminderAt);
+  if (isNaN(base.getTime())) return null;
+  if (reminder.repeat === "daily") {
+    base.setDate(base.getDate() + 1);
+    return base.toISOString();
+  }
+  if (reminder.repeat === "weekly") {
+    base.setDate(base.getDate() + 7);
+    return base.toISOString();
+  }
+  return null;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Mark reminders due as fired and advance repeated ones.
+ * Returns list of note ids that were marked fired.
+ */
+export async function markDueAsFired(nowIso) {
+  const nowTs = nowIso ? new Date(nowIso).getTime() : Date.now();
+  const state = ensureState();
+  const next = [...state.notes];
+  const firedIds = [];
+  for (let i = 0; i < next.length; i++) {
+    const n = next[i];
+    const r = n.reminder;
+    if (!r?.reminderAt) continue;
+    const ts = new Date(r.reminderAt).getTime();
+    if (isNaN(ts) || ts > nowTs) continue;
+    if (r.reminderStatus === "dismissed") continue;
+    // Mark fired
+    firedIds.push(n.id);
+    const nextRepeatAt = computeNextRepeat(r);
+    const newReminder = nextRepeatAt
+      ? { ...r, reminderAt: nextRepeatAt, reminderStatus: "pending" }
+      : { ...r, reminderStatus: "fired" };
+    next[i] = { ...n, reminder: newReminder, updated_at: new Date().toISOString() };
+  }
+  if (firedIds.length) {
+    saveNotes(next);
+  }
+  return firedIds;
 }
 
 export const _internal = {

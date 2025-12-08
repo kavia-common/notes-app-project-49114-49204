@@ -11,12 +11,18 @@ import {
   _internal,
   uploadAttachment,
   deleteAttachment,
+  setReminder,
+  clearReminder,
+  listDueReminders,
+  markDueAsFired,
+  dismissReminder,
+  snoozeReminder,
 } from "../services/notesService";
 import "./notes.css";
 
 // PUBLIC_INTERFACE
 export default function NotesPage() {
-  /** NotesPage renders a notes list with create/edit, sorting, category organization, and attachments. */
+  /** NotesPage renders a notes list with create/edit, sorting, category organization, attachments, and reminders. */
   const [notes, setNotes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [title, setTitle] = useState("");
@@ -27,6 +33,18 @@ export default function NotesPage() {
   const [feedback, setFeedback] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [creating, setCreating] = useState(false);
+
+  // Reminders form state for create
+  const [reminderDate, setReminderDate] = useState(""); // yyyy-mm-dd
+  const [reminderTime, setReminderTime] = useState(""); // HH:mm
+  const [reminderRepeat, setReminderRepeat] = useState("none"); // none|daily|weekly
+  // Reminders form state for edit
+  const [editReminderDate, setEditReminderDate] = useState("");
+  const [editReminderTime, setEditReminderTime] = useState("");
+  const [editReminderRepeat, setEditReminderRepeat] = useState("none");
+
+  // Toast notifications queue (in-app)
+  const [toasts, setToasts] = useState([]);
 
   // Sorting and filter state (persist to URL)
   const [sortBy, setSortBy] = useState(() => getParamOrDefault("sort", _internal.DEFAULT_SORT));
@@ -55,6 +73,7 @@ export default function NotesPage() {
   const createSubmitRef = useRef(null);
   const newAttachInputRef = useRef(null);
   const editAttachInputRef = useRef(null);
+  const reminderIntervalRef = useRef(null);
 
   // URL helpers
   function getParamOrDefault(key, def) {
@@ -140,6 +159,52 @@ export default function NotesPage() {
     }
   }, [searchInput]);
 
+  // In-app scheduler for local reminders (every 30s)
+  useEffect(() => {
+    function startInterval() {
+      if (reminderIntervalRef.current) return;
+      reminderIntervalRef.current = window.setInterval(async () => {
+        try {
+          const due = await listDueReminders();
+          if (due.length) {
+            // Mark as fired/advance repeats first
+            await markDueAsFired();
+            // Show toasts for each due reminder
+            due.forEach(({ note }) => {
+              enqueueToast({
+                id: `toast_${Date.now()}_${note.id}`,
+                noteId: note.id,
+                title: note.title,
+                message: "Reminder due",
+              });
+            });
+            // Refresh notes so statuses reflect
+            await loadData();
+          }
+        } catch {
+          // ignore
+        }
+      }, 30_000);
+    }
+
+    startInterval();
+    return () => {
+      if (reminderIntervalRef.current) {
+        clearInterval(reminderIntervalRef.current);
+        reminderIntervalRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function enqueueToast(t) {
+    setToasts((prev) => [t, ...prev].slice(0, 5));
+    // auto-remove after 8s
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((x) => x.id !== t.id));
+    }, 8000);
+  }
+
   function resetFeedbackSoon() {
     window.clearTimeout(resetFeedbackSoon._t);
     resetFeedbackSoon._t = window.setTimeout(() => setFeedback(null), 2500);
@@ -218,6 +283,13 @@ export default function NotesPage() {
     setNewNoteAttachments((prev) => prev.filter((a) => String(a.id) !== String(tmpId)));
   }
 
+  function composeReminderISO(dateStr, timeStr) {
+    if (!dateStr || !timeStr) return null;
+    const ts = new Date(`${dateStr}T${timeStr}:00`);
+    if (isNaN(ts.getTime())) return null;
+    return ts.toISOString();
+  }
+
   async function handleCreate(e) {
     e.preventDefault();
     const t = title.trim();
@@ -227,6 +299,21 @@ export default function NotesPage() {
       resetFeedbackSoon();
       return;
     }
+    // Validate future reminder if set
+    let reminderPayload;
+    if (reminderDate && reminderTime) {
+      const iso = composeReminderISO(reminderDate, reminderTime);
+      if (!iso || new Date(iso).getTime() <= Date.now()) {
+        setFeedback({ type: "error", message: "Reminder time must be in the future." });
+        resetFeedbackSoon();
+        return;
+      }
+      reminderPayload = {
+        reminderAt: iso,
+        repeat: reminderRepeat,
+        reminderStatus: "pending",
+      };
+    }
     try {
       setCreating(true);
       const note = await createNote({
@@ -234,6 +321,7 @@ export default function NotesPage() {
         content: c,
         categories: parsedNewNoteCategories,
         attachments: newNoteAttachments, // local mode persists
+        reminder: reminderPayload,
       });
       setNotes((prev) =>
         _internal.applySortFilter([note, ...prev], {
@@ -246,13 +334,16 @@ export default function NotesPage() {
       setContent("");
       setNewNoteCatsInput("");
       setNewNoteAttachments([]);
+      setReminderDate("");
+      setReminderTime("");
+      setReminderRepeat("none");
       setFeedback({ type: "success", message: "Note created." });
       // refresh categories list
       const cats = await listCategories();
       setCategories(cats);
       resetFeedbackSoon();
     } catch (e) {
-      setFeedback({ type: "error", message: "Failed to create note." });
+      setFeedback({ type: "error", message: e?.message || "Failed to create note." });
       resetFeedbackSoon();
     } finally {
       setCreating(false);
@@ -265,6 +356,24 @@ export default function NotesPage() {
     setEditContent(note.content || "");
     setEditCatsInput(Array.isArray(note.categories) ? note.categories.join(", ") : "");
     setEditAttachments(Array.isArray(note.attachments) ? [...note.attachments] : []);
+    // preload reminder fields
+    const r = note.reminder;
+    if (r?.reminderAt) {
+      const d = new Date(r.reminderAt);
+      if (!isNaN(d.getTime())) {
+        setEditReminderDate(d.toISOString().slice(0, 10));
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        setEditReminderTime(`${hh}:${mm}`);
+      } else {
+        setEditReminderDate("");
+        setEditReminderTime("");
+      }
+    } else {
+      setEditReminderDate("");
+      setEditReminderTime("");
+    }
+    setEditReminderRepeat(r?.repeat || "none");
   }
 
   function closeEdit() {
@@ -273,6 +382,9 @@ export default function NotesPage() {
     setEditContent("");
     setEditCatsInput("");
     setEditAttachments([]);
+    setEditReminderDate("");
+    setEditReminderTime("");
+    setEditReminderRepeat("none");
   }
 
   async function handleSaveEdit(e) {
@@ -285,6 +397,27 @@ export default function NotesPage() {
       resetFeedbackSoon();
       return;
     }
+
+    // compute reminder update
+    let reminderPatch = editingNote.reminder;
+    const hasDateTime = editReminderDate && editReminderTime;
+    if (hasDateTime) {
+      const iso = composeReminderISO(editReminderDate, editReminderTime);
+      if (!iso || new Date(iso).getTime() <= Date.now()) {
+        setFeedback({ type: "error", message: "Reminder time must be in the future." });
+        resetFeedbackSoon();
+        return;
+      }
+      reminderPatch = {
+        ...(editingNote.reminder || {}),
+        reminderAt: iso,
+        repeat: editReminderRepeat || "none",
+        reminderStatus: "pending",
+      };
+    } else {
+      reminderPatch = undefined; // clear reminder if either field is empty
+    }
+
     try {
       setSavingEdit(true);
       const updated = await updateNote(editingNote.id, {
@@ -292,6 +425,7 @@ export default function NotesPage() {
         content: c,
         categories: parsedEditCategories,
         attachments: editAttachments, // local mode only
+        reminder: reminderPatch,
       });
       // Optimistically update list with resort/filter
       setNotes((prev) => {
@@ -310,7 +444,7 @@ export default function NotesPage() {
       const cats = await listCategories();
       setCategories(cats);
     } catch (e) {
-      setFeedback({ type: "error", message: "Failed to update note." });
+      setFeedback({ type: "error", message: e?.message || "Failed to update note." });
       resetFeedbackSoon();
     } finally {
       setSavingEdit(false);
@@ -476,6 +610,41 @@ export default function NotesPage() {
     return `${size.toFixed(size < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
   }
 
+  // Reminder actions on toast
+  async function handleToastDismiss(noteId, toastId) {
+    try {
+      await dismissReminder(noteId);
+      await loadData();
+    } finally {
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+    }
+  }
+  async function handleToastSnooze(noteId, toastId, minutes) {
+    try {
+      await snoozeReminder(noteId, minutes);
+      await loadData();
+      setFeedback({ type: "success", message: `Snoozed for ${minutes} minutes.` });
+      resetFeedbackSoon();
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to snooze." });
+      resetFeedbackSoon();
+    } finally {
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+    }
+  }
+
+  function reminderChip(note) {
+    const r = note.reminder;
+    if (!r?.reminderAt) return null;
+    const when = new Date(r.reminderAt);
+    if (isNaN(when.getTime())) return null;
+    return (
+      <span className={`chip chip-reminder status-${r.reminderStatus || "pending"}`} title="Reminder">
+        ⏰ {when.toLocaleString()} {r.repeat && r.repeat !== "none" ? `• ${r.repeat}` : ""}
+      </span>
+    );
+  }
+
   return (
     <div className="notes-app">
       <header className="navbar">
@@ -559,6 +728,48 @@ export default function NotesPage() {
                 />
                 <div id="cats-help" className="muted" style={{ fontSize: 12 }}>
                   Assign multiple categories by separating with commas.
+                </div>
+              </div>
+
+              <div className="form-row">
+                <label>Reminder</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div>
+                    <label htmlFor="rem-date" className="sr-only">Reminder date</label>
+                    <input
+                      id="rem-date"
+                      type="date"
+                      value={reminderDate}
+                      onChange={(e) => setReminderDate(e.target.value)}
+                      aria-label="Reminder date"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="rem-time" className="sr-only">Reminder time</label>
+                    <input
+                      id="rem-time"
+                      type="time"
+                      value={reminderTime}
+                      onChange={(e) => setReminderTime(e.target.value)}
+                      aria-label="Reminder time"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="rem-repeat" className="sr-only">Repeat</label>
+                    <select
+                      id="rem-repeat"
+                      value={reminderRepeat}
+                      onChange={(e) => setReminderRepeat(e.target.value)}
+                      aria-label="Reminder repeat"
+                    >
+                      <option value="none">No repeat</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Reminder must be in the future. Repeat reschedules automatically when it fires.
                 </div>
               </div>
 
@@ -701,15 +912,17 @@ export default function NotesPage() {
                       </div>
                     )}
 
-                    {Array.isArray(n.categories) && n.categories.length > 0 && (
-                      <div className="note-categories">
-                        {n.categories.map((c) => (
+                    {/* reminder chip */}
+                    <div className="note-categories" style={{ gap: 6, flexWrap: "wrap" }}>
+                      {Array.isArray(n.categories) && n.categories.length > 0 &&
+                        n.categories.map((c) => (
                           <span key={c} className="chip" aria-label={`Category ${c}`}>
                             {c}
                           </span>
                         ))}
-                      </div>
-                    )}
+                      {reminderChip(n)}
+                    </div>
+
                     <div className="note-actions">
                       <button
                         className="btn"
@@ -732,6 +945,21 @@ export default function NotesPage() {
             )}
           </section>
         </main>
+      </div>
+
+      {/* Toast notifications */}
+      <div className="toast-container" role="status" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            <div className="toast-title">⏰ {t.title}</div>
+            <div className="toast-message">{t.message}</div>
+            <div className="toast-actions">
+              <button className="btn" onClick={() => handleToastSnooze(t.noteId, t.id, 5)}>Snooze +5m</button>
+              <button className="btn" onClick={() => handleToastSnooze(t.noteId, t.id, 15)}>Snooze +15m</button>
+              <button className="btn" onClick={() => handleToastDismiss(t.noteId, t.id)}>Dismiss</button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {confirmDeleteId !== null && (
@@ -788,6 +1016,65 @@ export default function NotesPage() {
                   onChange={(e) => setEditCatsInput(e.target.value)}
                   placeholder="e.g., Personal, Ideas"
                 />
+              </div>
+
+              <div className="form-row">
+                <label>Reminder</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div>
+                    <label htmlFor="edit-rem-date" className="sr-only">Reminder date</label>
+                    <input
+                      id="edit-rem-date"
+                      type="date"
+                      value={editReminderDate}
+                      onChange={(e) => setEditReminderDate(e.target.value)}
+                      aria-label="Reminder date"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-rem-time" className="sr-only">Reminder time</label>
+                    <input
+                      id="edit-rem-time"
+                      type="time"
+                      value={editReminderTime}
+                      onChange={(e) => setEditReminderTime(e.target.value)}
+                      aria-label="Reminder time"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-rem-repeat" className="sr-only">Repeat</label>
+                    <select
+                      id="edit-rem-repeat"
+                      value={editReminderRepeat}
+                      onChange={(e) => setEditReminderRepeat(e.target.value)}
+                      aria-label="Reminder repeat"
+                    >
+                      <option value="none">No repeat</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                    </select>
+                  </div>
+                  {editingNote?.reminder && (
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={async () => {
+                        try {
+                          await clearReminder(editingNote.id);
+                          setEditReminderDate("");
+                          setEditReminderTime("");
+                          setEditReminderRepeat("none");
+                          await loadData();
+                        } catch {}
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Reminder must be in the future. Repeat reschedules automatically when it fires.
+                </div>
               </div>
 
               <div className="form-row">
