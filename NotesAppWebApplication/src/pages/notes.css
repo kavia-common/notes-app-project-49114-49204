@@ -645,6 +645,49 @@ input[type="text"]:focus, textarea:focus, select:focus {
   border: 0;
 }
 
+/* Quick Add FAB */
+.fab-quickadd {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 0;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.25);
+  cursor: pointer;
+  z-index: 70;
+}
+.fab-quickadd:hover {
+  opacity: 0.95;
+}
+.fab-quickadd:active {
+  transform: translateY(1px);
+}
+
+/* Quick Add modal overrides (more compact) */
+.quickadd-backdrop {
+  z-index: 65;
+}
+.quickadd-modal {
+  max-width: 420px;
+}
+.quickadd-counter {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.quickadd-counter.limit-reached {
+  color: #dc2626;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   .layout {

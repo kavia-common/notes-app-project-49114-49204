@@ -43,6 +43,34 @@ Retention policy:
 - Click "Insert & Save" to embed the sketch (as a data URL image) in the note content and add it as an attachment for offline persistence and backup/export.
 - The component lives at src/components/HandwritingCanvas.jsx with minimal styles in src/components/handwriting.css.
 
+## Quick Add Note (Popup)
+
+A lightweight popup for quickly creating short notes without leaving your current context.
+
+- Open via the floating + button at the bottom-right, or the keyboard shortcut:
+  - Ctrl/Cmd + Shift + N
+- Minimal fields:
+  - Title (optional)
+  - Content (required) — single textarea with character counter
+- Autosaves your draft while the popup is open, so accidental closes don’t lose text
+- Accessibility:
+  - Proper dialog semantics with focus trapping
+  - Escape closes the popup
+  - First input focused on open
+- Submit:
+  - Creates the note via the existing notesService
+  - Inserts the new note at the top of the list (respecting current sort/filter composition)
+  - Shows the existing Save Success toast
+  - Prevents duplicate submissions and disables the submit button while saving
+  - Inline validation ensures content is not empty
+- Content sanitization:
+  - Reuses the app’s existing sanitization logic to keep input safe
+
+Configuration:
+- QUICK_ADD_MAX_LENGTH via env var:
+  - REACT_APP_QUICK_ADD_MAX_LENGTH (default 280)
+  - Legacy alias: REACT_APP_QUICK_ADD_CHAR_LIMIT
+
 ## Auto-save
 
 - The editor automatically saves your note as you type using a debounced request (default 1000ms after you stop typing).

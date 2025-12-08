@@ -31,6 +31,7 @@ import ConnectivityStatus from "../components/ConnectivityStatus";
 import HandwritingCanvas from "../components/HandwritingCanvas";
 import NoteCount from "../components/NoteCount";
 import SuccessToast from "../components/SuccessToast";
+import QuickAddNote from "../components/QuickAddNote";
 import { NOTE_TEMPLATES, getTemplateById } from "../templates/templates";
 import {
   exportAllNotesAsTXT,
@@ -145,6 +146,14 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Quick Add popup state
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const quickAddMaxLength = (() => {
+    const raw = process.env.REACT_APP_QUICK_ADD_MAX_LENGTH || process.env.REACT_APP_QUICK_ADD_CHAR_LIMIT || "280";
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 280;
+  })();
 
   // Voice dictation UI state
   const [isListeningCreate, setIsListeningCreate] = useState(false);
@@ -275,6 +284,20 @@ export default function NotesPage() {
   }
 
   // Keyboard shortcuts
+  // Also listen globally for Quick Add: Ctrl/Cmd+Shift+N
+  useEffect(() => {
+    function onGlobalKey(e) {
+      const isMac = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && e.shiftKey && (e.key === "N" || e.key === "n")) {
+        e.preventDefault();
+        setQuickAddOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onGlobalKey);
+    return () => window.removeEventListener("keydown", onGlobalKey);
+  }, []);
+
   function handleEditorKeyDown(e, isEditMode = false) {
     const isMac = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
     const mod = isMac ? e.metaKey : e.ctrlKey;
@@ -1840,6 +1863,53 @@ export default function NotesPage() {
           </section>
         </main>
       </div>
+
+      {/* Floating Action Button for Quick Add */}
+      <button
+        type="button"
+        className="fab-quickadd"
+        aria-label="Quick add note"
+        title="Quick add note (Ctrl/Cmd+Shift+N)"
+        onClick={() => setQuickAddOpen(true)}
+      >
+        +
+      </button>
+
+      {/* Quick Add Modal */}
+      <QuickAddNote
+        isOpen={quickAddOpen}
+        onClose={() => setQuickAddOpen(false)}
+        maxLength={quickAddMaxLength}
+        successToast={showSaveSuccess}
+        onCreate={async ({ title: t, content: c }) => {
+          // Use existing notesService createNote; sanitize content is handled upstream and in component
+          const note = await createNote({
+            title: t || "",
+            content: c || "",
+            categories: [],
+            attachments: [],
+          });
+          // Insert at top and apply current sort/filter pipeline
+          setNotes((prev) =>
+            _internal.applySortFilter([note, ...prev], {
+              sortBy,
+              category: selectedCategory,
+              query: debouncedQuery,
+              archivedMode,
+            })
+          );
+          // refresh categories in case (not required for quick add since categories not used)
+          try {
+            const cats = await listCategories();
+            setCategories(cats);
+          } catch {}
+          return note;
+        }}
+        sanitize={(html) => {
+          // Reuse same sanitization as this page
+          return sanitizeHtml(html);
+        }}
+      />
 
       {/* Toast notifications */}
       <div className="toast-container" role="status" aria-live="polite">
