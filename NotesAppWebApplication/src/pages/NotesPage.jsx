@@ -9,17 +9,20 @@ import {
   applySearchHighlight,
   SEARCH_STORAGE_KEY,
   _internal,
+  uploadAttachment,
+  deleteAttachment,
 } from "../services/notesService";
 import "./notes.css";
 
 // PUBLIC_INTERFACE
 export default function NotesPage() {
-  /** NotesPage renders a notes list with create/edit, sorting, and category organization. */
+  /** NotesPage renders a notes list with create/edit, sorting, category organization, and attachments. */
   const [notes, setNotes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [newNoteCatsInput, setNewNoteCatsInput] = useState("");
+  const [newNoteAttachments, setNewNoteAttachments] = useState([]); // local unsaved attachments (data URLs)
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -46,9 +49,12 @@ export default function NotesPage() {
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [editCatsInput, setEditCatsInput] = useState("");
+  const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
 
   const createSubmitRef = useRef(null);
+  const newAttachInputRef = useRef(null);
+  const editAttachInputRef = useRef(null);
 
   // URL helpers
   function getParamOrDefault(key, def) {
@@ -159,6 +165,59 @@ export default function NotesPage() {
     );
   }
 
+  function validateFilesBeforeAdd(files, currentLength) {
+    const limit = _internal.ATTACHMENTS_LIMIT_PER_NOTE;
+    const maxSize = _internal.ATTACHMENT_MAX_SIZE_BYTES;
+    const arr = Array.from(files || []);
+    const errors = [];
+    const accepted = [];
+    for (const f of arr) {
+      if (f.size > maxSize) {
+        errors.push(`${f.name} is too large (max 10MB)`);
+        continue;
+      }
+      if (currentLength + accepted.length + 1 > limit) {
+        errors.push(`Attachment limit reached (${limit})`);
+        break;
+      }
+      accepted.push(f);
+    }
+    return { accepted, errors };
+  }
+
+  async function handleCreateAttachmentsChange(e) {
+    const files = e.target.files;
+    const { accepted, errors } = validateFilesBeforeAdd(files, newNoteAttachments.length);
+    if (errors.length) {
+      setFeedback({ type: "error", message: errors[0] });
+      resetFeedbackSoon();
+    }
+    if (accepted.length === 0) return;
+
+    // locally convert to data URL attachment records
+    const newOnes = [];
+    for (const f of accepted) {
+      const url = await fileToDataUrl(f);
+      newOnes.push({
+        // temporary id, will be persisted on note create
+        id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        type: getTypeFromMime(f.type),
+        name: f.name,
+        size: f.size,
+        mime: f.type || "application/octet-stream",
+        url,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    setNewNoteAttachments((prev) => [...newOnes, ...prev]);
+    // reset input value to allow re-select same files if needed
+    if (newAttachInputRef.current) newAttachInputRef.current.value = "";
+  }
+
+  function removeNewAttachment(tmpId) {
+    setNewNoteAttachments((prev) => prev.filter((a) => String(a.id) !== String(tmpId)));
+  }
+
   async function handleCreate(e) {
     e.preventDefault();
     const t = title.trim();
@@ -174,6 +233,7 @@ export default function NotesPage() {
         title: t,
         content: c,
         categories: parsedNewNoteCategories,
+        attachments: newNoteAttachments, // local mode persists
       });
       setNotes((prev) =>
         _internal.applySortFilter([note, ...prev], {
@@ -185,6 +245,7 @@ export default function NotesPage() {
       setTitle("");
       setContent("");
       setNewNoteCatsInput("");
+      setNewNoteAttachments([]);
       setFeedback({ type: "success", message: "Note created." });
       // refresh categories list
       const cats = await listCategories();
@@ -203,6 +264,7 @@ export default function NotesPage() {
     setEditTitle(note.title || "");
     setEditContent(note.content || "");
     setEditCatsInput(Array.isArray(note.categories) ? note.categories.join(", ") : "");
+    setEditAttachments(Array.isArray(note.attachments) ? [...note.attachments] : []);
   }
 
   function closeEdit() {
@@ -210,6 +272,7 @@ export default function NotesPage() {
     setEditTitle("");
     setEditContent("");
     setEditCatsInput("");
+    setEditAttachments([]);
   }
 
   async function handleSaveEdit(e) {
@@ -228,6 +291,7 @@ export default function NotesPage() {
         title: t,
         content: c,
         categories: parsedEditCategories,
+        attachments: editAttachments, // local mode only
       });
       // Optimistically update list with resort/filter
       setNotes((prev) => {
@@ -281,6 +345,136 @@ export default function NotesPage() {
   ];
 
   const visibleCategories = useMemo(() => ["all", ...categories], [categories]);
+
+  function getTypeFromMime(mime = "") {
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    return "file";
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function handleEditAttachmentsChange(e) {
+    const files = e.target.files;
+    const { accepted, errors } = validateFilesBeforeAdd(files, editAttachments.length);
+    if (errors.length) {
+      setFeedback({ type: "error", message: errors[0] });
+      resetFeedbackSoon();
+    }
+    if (accepted.length === 0) return;
+
+    // In API mode, attempt upload; local mode convert to dataURL
+    if (_internal.useApi && editingNote) {
+      try {
+        for (const f of accepted) {
+          const att = await uploadAttachment(editingNote.id, f);
+          setEditAttachments((prev) => [att, ...prev]);
+        }
+      } catch (err) {
+        setFeedback({ type: "error", message: "Attachment upload failed; using local storage." });
+        resetFeedbackSoon();
+        // fallback to local
+        const newOnes = [];
+        for (const f of accepted) {
+          const url = await fileToDataUrl(f);
+          newOnes.push({
+            id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            type: getTypeFromMime(f.type),
+            name: f.name,
+            size: f.size,
+            mime: f.type || "application/octet-stream",
+            url,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        setEditAttachments((prev) => [...newOnes, ...prev]);
+      }
+    } else {
+      const newOnes = [];
+      for (const f of accepted) {
+        const url = await fileToDataUrl(f);
+        newOnes.push({
+          id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          type: getTypeFromMime(f.type),
+          name: f.name,
+          size: f.size,
+          mime: f.type || "application/octet-stream",
+          url,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      setEditAttachments((prev) => [...newOnes, ...prev]);
+    }
+    if (editAttachInputRef.current) editAttachInputRef.current.value = "";
+  }
+
+  function removeEditAttachmentLocal(attId) {
+    setEditAttachments((prev) => prev.filter((a) => String(a.id) !== String(attId)));
+  }
+
+  async function handleRemovePersistedAttachment(noteId, attId) {
+    try {
+      await deleteAttachment(noteId, attId);
+      setEditAttachments((prev) => prev.filter((a) => String(a.id) !== String(attId)));
+    } catch {
+      setFeedback({ type: "error", message: "Failed to remove attachment." });
+      resetFeedbackSoon();
+    }
+  }
+
+  function renderAttachmentsPreview(list, removable, onRemove) {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    return (
+      <div className="attachments">
+        {list.map((a) => (
+          <div key={a.id} className="attachment-card">
+            {a.type === "image" ? (
+              <img src={a.url} alt={a.name} className="attachment-thumb" />
+            ) : a.type === "audio" ? (
+              <audio controls src={a.url} className="attachment-audio" />
+            ) : (
+              <div className="attachment-chip" title={a.name}>
+                <span className="attachment-name">{a.name}</span>
+                <span className="attachment-size">{formatSize(a.size)}</span>
+              </div>
+            )}
+            <div className="attachment-meta">
+              <span className="muted">{a.name}</span>
+            </div>
+            {removable && (
+              <button
+                type="button"
+                className="btn btn-danger attachment-remove"
+                aria-label={`Remove attachment ${a.name}`}
+                onClick={() => onRemove(a.id)}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function formatSize(bytes) {
+    if (!bytes && bytes !== 0) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let u = 0;
+    while (size >= 1024 && u < units.length - 1) {
+      size /= 1024;
+      u++;
+    }
+    return `${size.toFixed(size < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
+  }
 
   return (
     <div className="notes-app">
@@ -367,6 +561,24 @@ export default function NotesPage() {
                   Assign multiple categories by separating with commas.
                 </div>
               </div>
+
+              <div className="form-row">
+                <label htmlFor="new-attachments">Add attachments</label>
+                <input
+                  id="new-attachments"
+                  ref={newAttachInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,audio/*,*/*"
+                  onChange={handleCreateAttachmentsChange}
+                  aria-describedby="attach-help"
+                />
+                <div id="attach-help" className="muted" style={{ fontSize: 12 }}>
+                  Up to {_internal.ATTACHMENTS_LIMIT_PER_NOTE} files, max 10MB each.
+                </div>
+                {renderAttachmentsPreview(newNoteAttachments, true, removeNewAttachment)}
+              </div>
+
               <div className="actions">
                 <button
                   ref={createSubmitRef}
@@ -465,6 +677,30 @@ export default function NotesPage() {
                       className="note-content"
                       dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.content, debouncedQuery) }}
                     />
+
+                    {/* attachments listing */}
+                    {Array.isArray(n.attachments) && n.attachments.length > 0 && (
+                      <div className="attachments attachments-readonly" aria-label="Attachments">
+                        {n.attachments.map((a) => (
+                          <div key={a.id} className="attachment-card">
+                            {a.type === "image" ? (
+                              <img src={a.url} alt={a.name} className="attachment-thumb" />
+                            ) : a.type === "audio" ? (
+                              <audio controls src={a.url} className="attachment-audio" />
+                            ) : (
+                              <div className="attachment-chip" title={a.name}>
+                                <span className="attachment-name">{a.name}</span>
+                                <span className="attachment-size">{formatSize(a.size)}</span>
+                              </div>
+                            )}
+                            <div className="attachment-meta">
+                              <span className="muted">{a.name}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {Array.isArray(n.categories) && n.categories.length > 0 && (
                       <div className="note-categories">
                         {n.categories.map((c) => (
@@ -553,6 +789,35 @@ export default function NotesPage() {
                   placeholder="e.g., Personal, Ideas"
                 />
               </div>
+
+              <div className="form-row">
+                <label htmlFor="edit-attachments">Add attachments</label>
+                <input
+                  id="edit-attachments"
+                  ref={editAttachInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,audio/*,*/*"
+                  onChange={handleEditAttachmentsChange}
+                  aria-describedby="edit-attach-help"
+                />
+                <div id="edit-attach-help" className="muted" style={{ fontSize: 12 }}>
+                  Up to {_internal.ATTACHMENTS_LIMIT_PER_NOTE} files, max 10MB each.
+                </div>
+                {renderAttachmentsPreview(
+                  editAttachments,
+                  true,
+                  (attId) => {
+                    // If it looks like persisted (numeric id) and API is used, use API deletion; else remove locally
+                    if (_internal.useApi && editingNote && String(attId).match(/^\d+$/)) {
+                      handleRemovePersistedAttachment(editingNote.id, attId);
+                    } else {
+                      removeEditAttachmentLocal(attId);
+                    }
+                  }
+                )}
+              </div>
+
               <div className="modal-actions">
                 <button type="button" className="btn" onClick={closeEdit}>
                   Cancel
@@ -572,4 +837,10 @@ export default function NotesPage() {
       )}
     </div>
   );
+}
+
+function getTypeFromMime(mime = "") {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  return "file";
 }

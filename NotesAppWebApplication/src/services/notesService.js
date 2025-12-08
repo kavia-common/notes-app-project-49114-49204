@@ -1,6 +1,7 @@
 //
 // Notes service: switches between API-backed and local in-memory storage
 // Adds categories/folders and sorting/filtering with local persistence and migration.
+// Adds attachments support with local data URL persistence and API stubs.
 //
 const API_BASE =
   process.env.REACT_APP_API_BASE ||
@@ -22,6 +23,10 @@ const headers = {
 const DEFAULT_SORT = "updated_desc"; // updated_desc | updated_asc | created_desc | created_asc | title_asc | title_desc
 const DEFAULT_SEARCH_LS_KEY = "notes.search.query";
 
+// Attachment related defaults
+const ATTACHMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const ATTACHMENTS_LIMIT_PER_NOTE = 10;
+
 /* ===== Local in-memory store with localStorage persistence ===== */
 const LS_KEY = "notes.mvp.list"; // legacy notes array
 const LS_KEY_NOTES_STATE = "notes.mvp.state.v2"; // new state object (notes + meta)
@@ -30,8 +35,12 @@ const MIGRATION_FLAG = "notes.migrated.v2";
 /**
  * Local state shape:
  * {
- *   notes: [{id, title, content, created_at, updated_at, categories?: string[]}],
- *   categories: string[] // optional global category list for quick selection
+ *   notes: [{
+ *     id, title, content, created_at, updated_at,
+ *     categories?: string[],
+ *     attachments?: [{id, type, name, size, mime, url, createdAt}]
+ *   }],
+ *   categories: string[]
  * }
  */
 function readLocalLegacyNotes() {
@@ -51,10 +60,11 @@ function readLocalState() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.notes)) {
-      // normalize categories field
+      // normalize fields
       parsed.notes = parsed.notes.map((n) => ({
         ...n,
         categories: Array.isArray(n.categories) ? n.categories : [],
+        attachments: Array.isArray(n.attachments) ? n.attachments : [],
       }));
       parsed.categories = Array.isArray(parsed.categories)
         ? Array.from(new Set(parsed.categories))
@@ -89,6 +99,7 @@ function migrateIfNeeded() {
         notes: legacy.map((n) => ({
           ...n,
           categories: Array.isArray(n.categories) ? n.categories : [],
+          attachments: Array.isArray(n.attachments) ? n.attachments : [],
         })),
         categories: [],
       };
@@ -125,6 +136,25 @@ function nextId(notes) {
   return notes.length ? Math.max(...notes.map((n) => Number(n.id) || 0)) + 1 : 1;
 }
 
+function nextAttachmentId(attachments) {
+  return attachments.length ? Math.max(...attachments.map((a) => Number(a.id) || 0)) + 1 : 1;
+}
+
+function getAttachmentType(mime = "") {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  return "file";
+}
+
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function applySortFilter(notes, options = {}) {
   const { sortBy = DEFAULT_SORT, category, query } = options;
   let arr = Array.isArray(notes) ? [...notes] : [];
@@ -136,17 +166,21 @@ function applySortFilter(notes, options = {}) {
     );
   }
 
-  // Text/tags search filter (case-insensitive, partial match)
+  // Text/tags/attachment name search filter (case-insensitive)
   if (query && String(query).trim()) {
     const q = String(query).trim().toLowerCase();
     arr = arr.filter((n) => {
       const title = (n.title || "").toLowerCase();
       const content = (n.content || "").toLowerCase();
       const categories = Array.isArray(n.categories) ? n.categories.map((c) => (c || "").toLowerCase()) : [];
+      const attachmentNames = Array.isArray(n.attachments)
+        ? n.attachments.map((a) => String(a.name || "").toLowerCase())
+        : [];
       return (
         title.includes(q) ||
         content.includes(q) ||
-        categories.some((c) => c.includes(q))
+        categories.some((c) => c.includes(q)) ||
+        attachmentNames.some((name) => name.includes(q))
       );
     });
   }
@@ -189,13 +223,11 @@ export async function listNotes(options = {}) {
   if (useApi) {
     try {
       const u = new URL(`${API_BASE}/notes`, window.location.origin);
-      // Optional: pass sort/filter/search as query (backend may ignore)
       if (options.sortBy) u.searchParams.set("sortBy", options.sortBy);
       if (options.category && options.category !== "all")
         u.searchParams.set("category", options.category);
       if (options.query && String(options.query).trim())
         u.searchParams.set("q", String(options.query).trim());
-      // also pass tags derived from category if present
       if (options.category && options.category !== "all")
         u.searchParams.set("tags", options.category);
 
@@ -203,7 +235,11 @@ export async function listNotes(options = {}) {
       if (!res.ok) throw new Error(`Failed to fetch notes: ${res.status}`);
       const data = await res.json();
       const normalized = Array.isArray(data)
-        ? data.map((n) => ({ ...n, categories: Array.isArray(n.categories) ? n.categories : [] }))
+        ? data.map((n) => ({
+            ...n,
+            categories: Array.isArray(n.categories) ? n.categories : [],
+            attachments: Array.isArray(n.attachments) ? n.attachments : [],
+          }))
         : [];
       return applySortFilter(normalized, options);
     } catch (e) {
@@ -251,7 +287,7 @@ export const SEARCH_STORAGE_KEY = DEFAULT_SEARCH_LS_KEY;
 // PUBLIC_INTERFACE
 export async function createNote(note) {
   /**
-   * Create a note (title, content, categories?: string[]).
+   * Create a note (title, content, categories?: string[], attachments?: array).
    * Uses API if available, otherwise local.
    */
   const payload = {
@@ -260,6 +296,7 @@ export async function createNote(note) {
     categories: Array.isArray(note.categories)
       ? note.categories.filter(Boolean)
       : [],
+    // attachments ignored for API create; handled by separate upload
   };
   if (useApi) {
     try {
@@ -270,25 +307,35 @@ export async function createNote(note) {
       });
       if (!res.ok) throw new Error(`Failed to create note: ${res.status}`);
       const created = await res.json();
-      return { ...created, categories: Array.isArray(created.categories) ? created.categories : [] };
+      return {
+        ...created,
+        categories: Array.isArray(created.categories) ? created.categories : [],
+        attachments: Array.isArray(created.attachments) ? created.attachments : [],
+      };
     } catch (e) {
       console.warn("Falling back to local create due to API error:", e.message);
-      return localCreateNote(payload);
+      return localCreateNote({ ...payload, attachments: note.attachments || [] });
     }
   }
-  return localCreateNote(payload);
+  return localCreateNote({ ...payload, attachments: note.attachments || [] });
 }
 
 /** PUBLIC_INTERFACE */
 export async function updateNote(id, note) {
   /**
-   * Update a note by id with {title?, content?, categories?}; API if available, else local.
+   * Update a note by id with {title?, content?, categories?, attachments?}; API if available, else local.
+   * For API path, attachments should be managed by upload/deleteAttachment endpoints, so we ignore attachments array here.
    */
   const payload = {
     ...(note.title !== undefined ? { title: note.title } : {}),
     ...(note.content !== undefined ? { content: note.content } : {}),
     ...(note.categories !== undefined
       ? { categories: Array.isArray(note.categories) ? note.categories : [] }
+      : {}),
+    ...(useApi
+      ? {} // do not send attachments in PUT in API mode
+      : note.attachments !== undefined
+      ? { attachments: Array.isArray(note.attachments) ? note.attachments : [] }
       : {}),
   };
   if (useApi) {
@@ -300,7 +347,11 @@ export async function updateNote(id, note) {
       });
       if (!res.ok) throw new Error(`Failed to update note: ${res.status}`);
       const updated = await res.json();
-      return { ...updated, categories: Array.isArray(updated.categories) ? updated.categories : [] };
+      return {
+        ...updated,
+        categories: Array.isArray(updated.categories) ? updated.categories : [],
+        attachments: Array.isArray(updated.attachments) ? updated.attachments : [],
+      };
     } catch (e) {
       console.warn("Falling back to local update due to API error:", e.message);
       return localUpdateNote(id, payload);
@@ -361,6 +412,94 @@ export async function removeCategoryFromNote(noteId, category) {
   return localUpdateNote(noteId, { categories: Array.from(cats) });
 }
 
+/**
+ * PUBLIC_INTERFACE
+ * Upload a single attachment for a note. In local mode stores data URL in localStorage.
+ * In API mode, attempts multipart/form-data POST to `${API_BASE}/notes/:id/attachments`.
+ */
+export async function uploadAttachment(noteId, file) {
+  if (!file) throw new Error("No file provided");
+  if (file.size > ATTACHMENT_MAX_SIZE_BYTES) {
+    throw new Error("File too large. Max 10MB");
+  }
+  if (useApi) {
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API_BASE}/notes/${noteId}/attachments`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) throw new Error(`Failed to upload: ${res.status}`);
+      const att = await res.json();
+      return att;
+    } catch (e) {
+      console.warn("Attachment API not available; falling back to local:", e.message);
+      // fall through to local
+    }
+  }
+  // Local mode: encode as data URL and persist in note.attachments
+  const state = ensureState();
+  const idx = state.notes.findIndex((n) => String(n.id) === String(noteId));
+  if (idx === -1) throw new Error("Note not found");
+  const note = state.notes[idx];
+  const current = Array.isArray(note.attachments) ? note.attachments : [];
+  if (current.length >= ATTACHMENTS_LIMIT_PER_NOTE) {
+    throw new Error(`Maximum ${ATTACHMENTS_LIMIT_PER_NOTE} attachments per note`);
+  }
+  const url = await toBase64(file);
+  const now = new Date().toISOString();
+  const attachment = {
+    id: nextAttachmentId(current),
+    type: getAttachmentType(file.type || ""),
+    name: file.name,
+    size: file.size,
+    mime: file.type || "application/octet-stream",
+    url, // data URL
+    createdAt: now,
+  };
+  const updated = {
+    ...note,
+    attachments: [attachment, ...current],
+    updated_at: now,
+  };
+  const next = [...state.notes];
+  next[idx] = updated;
+  saveNotes(next);
+  return attachment;
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Delete an attachment from a note. In API mode, attempts DELETE and falls back to local.
+ */
+export async function deleteAttachment(noteId, attachmentId) {
+  if (useApi) {
+    try {
+      const res = await fetch(`${API_BASE}/notes/${noteId}/attachments/${attachmentId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`Failed to delete attachment: ${res.status}`);
+      return true;
+    } catch (e) {
+      console.warn("Attachment delete API not available; falling back to local:", e.message);
+      // fall through to local
+    }
+  }
+  // Local
+  const state = ensureState();
+  const idx = state.notes.findIndex((n) => String(n.id) === String(noteId));
+  if (idx === -1) throw new Error("Note not found");
+  const note = state.notes[idx];
+  const filtered = (note.attachments || []).filter((a) => String(a.id) !== String(attachmentId));
+  const now = new Date().toISOString();
+  const updated = { ...note, attachments: filtered, updated_at: now };
+  const next = [...state.notes];
+  next[idx] = updated;
+  saveNotes(next);
+  return true;
+}
+
 /* ===== Local store implementations ===== */
 
 function localListNotes() {
@@ -376,6 +515,7 @@ function localCreateNote(payload) {
     title: payload.title,
     content: payload.content,
     categories: Array.isArray(payload.categories) ? payload.categories : [],
+    attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
     created_at: now,
     updated_at: now,
   };
@@ -409,6 +549,9 @@ function localUpdateNote(id, payload) {
     ...(payload.categories !== undefined
       ? { categories: Array.isArray(payload.categories) ? payload.categories : [] }
       : {}),
+    ...(payload.attachments !== undefined
+      ? { attachments: Array.isArray(payload.attachments) ? payload.attachments : [] }
+      : {}),
     updated_at: now,
   };
   const next = [...state.notes];
@@ -421,4 +564,10 @@ function localUpdateNote(id, payload) {
   return Promise.resolve(updated);
 }
 
-export const _internal = { useApi, DEFAULT_SORT, applySortFilter };
+export const _internal = {
+  useApi,
+  DEFAULT_SORT,
+  applySortFilter,
+  ATTACHMENTS_LIMIT_PER_NOTE,
+  ATTACHMENT_MAX_SIZE_BYTES,
+};

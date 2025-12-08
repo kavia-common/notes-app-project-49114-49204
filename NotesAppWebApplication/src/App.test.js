@@ -34,6 +34,26 @@ test("creating a note adds it to the list", async () => {
   expect(screen.getByText("Hello world")).toBeInTheDocument();
 });
 
+test("can add and remove attachments in create flow (local mode)", async () => {
+  render(<App />);
+  const fileInput = screen.getByLabelText(/Add attachments/i, { selector: "input#new-attachments" });
+
+  // create a small mock file (data doesn't matter)
+  const file = new File(["abc"], "hello.txt", { type: "text/plain" });
+  await fireEvent.change(fileInput, { target: { files: [file] } });
+
+  // chip or meta should show the file name in preview
+  expect(await screen.findByText(/hello.txt/i)).toBeInTheDocument();
+
+  // remove it
+  const removeBtn = screen.getByRole("button", { name: /Remove attachment hello.txt/i });
+  fireEvent.click(removeBtn);
+
+  await waitFor(() => {
+    expect(screen.queryByText(/hello.txt/i)).not.toBeInTheDocument();
+  });
+});
+
 test("editing a note updates its title and content", async () => {
   render(<App />);
 
