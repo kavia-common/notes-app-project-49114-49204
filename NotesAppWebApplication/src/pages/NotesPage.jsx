@@ -26,7 +26,7 @@ import {
   relockNoteInSession,
   isNoteLocked,
 } from "../services/notesService";
-import { formatRelative, formatExact } from "../utils/time";
+import { formatRelative, formatExact, parseDate } from "../utils/time";
 import { debounce } from "../utils/debounce";
 import { hasDuplicateTitle, normalizeTitle } from "../utils/titleUtils";
 import { isOnline, subscribeConnectivity, backgroundSync } from "../services/offlineSyncService";
@@ -198,6 +198,46 @@ export default function NotesPage() {
   // Voice dictation UI state
   const [isListeningCreate, setIsListeningCreate] = useState(false);
   const [isListeningEdit, setIsListeningEdit] = useState(false);
+
+  // Recently Edited config (env with defaults)
+  const RECENT_COUNT = useMemo(() => {
+    const raw = process.env.REACT_APP_RECENTLY_EDITED_COUNT;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 5;
+  }, []);
+  const RECENT_DAYS = useMemo(() => {
+    const raw = process.env.REACT_APP_RECENTLY_EDITED_DAYS;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 7;
+  }, []);
+
+  const [showAllRecent, setShowAllRecent] = useState(false);
+
+  // Efficient, memoized computation of recently edited subset
+  const recentlyEdited = useMemo(() => {
+    if (!Array.isArray(notes) || notes.length === 0) return [];
+    const now = Date.now();
+    const cutoffMs = now - RECENT_DAYS * 24 * 60 * 60 * 1000;
+    const filtered = notes.filter((n) => {
+      const d = parseDate(n.updated_at || n.created_at);
+      if (!d) return false;
+      return d.getTime() >= cutoffMs;
+    });
+    // Sort by most recent updated_at
+    filtered.sort((a, b) => {
+      const da = parseDate(a.updated_at || a.created_at)?.getTime() ?? 0;
+      const db = parseDate(b.updated_at || b.created_at)?.getTime() ?? 0;
+      return db - da;
+    });
+    return filtered;
+  }, [notes, RECENT_DAYS]);
+
+  function isWithinRecentWindow(date, days) {
+    const d = parseDate(date);
+    if (!d) return false;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    return d.getTime() >= cutoff;
+  }
 
   useEffect(() => {
     function onUpdated(ev) {
@@ -1669,6 +1709,129 @@ export default function NotesPage() {
         </aside>
 
         <main className="container main">
+          <section className="card recently-edited" role="region" aria-labelledby="recently-edited-heading">
+            <div className="toolbar toolbar-wrap">
+              <h2 id="recently-edited-heading" className="title" style={{ marginBottom: 0 }}>
+                Recently Edited
+              </h2>
+              <div className="toolbar-right">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => {
+                    // Scroll to main list section heading "Your Notes"
+                    const el = document.getElementById("your-notes-heading");
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  aria-label="View all notes in the main list"
+                  title="View all"
+                >
+                  View all
+                </button>
+              </div>
+            </div>
+
+            {/* Recently edited list */}
+            {recentlyEdited.length === 0 ? (
+              <div className="muted">No recent edits.</div>
+            ) : (
+              <ul className="notes-list recent-list" role="list">
+                {recentlyEdited.slice(0, showAllRecent ? recentlyEdited.length : RECENT_COUNT).map((n) => {
+                  const withinWindow = isWithinRecentWindow(n.updated_at, RECENT_DAYS);
+                  return (
+                    <li
+                      key={`recent-${n.id}`}
+                      className={`note-item note-item--recent ${n.backgroundColor ? `text-${getContrastYIQ(n.backgroundColor)}` : ""} ${
+                        n.backgroundColor && needsOverlay(n.backgroundColor) ? "with-overlay" : ""
+                      }`}
+                      style={n.backgroundColor ? { backgroundColor: n.backgroundColor } : undefined}
+                      tabIndex={0}
+                      role="article"
+                      aria-label={`Recently edited note ${n.title || "Untitled"}. Last updated ${formatRelative(n.updated_at || n.created_at)}.`}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openEdit(n);
+                        }
+                      }}
+                    >
+                      <div className="note-meta">
+                        <div className="note-title">
+                          <span
+                            dangerouslySetInnerHTML={{ __html: applySearchHighlight(n.title, debouncedQuery) }}
+                          />
+                          {withinWindow && (
+                            <span
+                              className="chip chip-recent"
+                              title="Recently edited"
+                              aria-label="Recently edited"
+                              role="note"
+                            >
+                              Recently edited
+                            </span>
+                          )}
+                          {n.lock?.isLocked ? (
+                            <span className="chip chip-locked" title="Locked" aria-label="Locked">🔒</span>
+                          ) : null}
+                          {n.archived ? <span className="chip" style={{ marginLeft: 6 }}>Archived</span> : null}
+                        </div>
+                        <div className="note-date">
+                          <span title={formatExact(n.updated_at || n.created_at) || ""}>
+                            Last updated: {formatRelative(n.updated_at || n.created_at)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="note-content">
+                        {n.lock?.isLocked && isNoteLocked(n) ? (
+                          <div className="lock-placeholder" role="status" aria-live="polite">
+                            <span className="lock-icon" aria-hidden="true">🔒</span>
+                            <span className="lock-text">This note is locked.</span>
+                            <button
+                              className="btn"
+                              type="button"
+                              onClick={() => { setUnlockForNote(n); setPinInput(""); setPinError(""); setTimeout(() => pinInputRef.current?.focus(), 0); }}
+                              aria-label={`Unlock note ${n.title}`}
+                            >
+                              Unlock
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            dangerouslySetInnerHTML={{ __html: renderNoteHtml(n.content, debouncedQuery) }}
+                          />
+                        )}
+                      </div>
+                      <div className="note-actions" style={{ gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={() => openEdit(n)}
+                          aria-label={`Edit note ${n.title}`}
+                          title="Edit"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {recentlyEdited.length > RECENT_COUNT && !showAllRecent && (
+              <div className="recent-controls">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => setShowAllRecent(true)}
+                  aria-label="See more recently edited notes"
+                  title="See more"
+                >
+                  See more
+                </button>
+              </div>
+            )}
+          </section>
           <section className="card">
             <div className="toolbar">
               <h2 className="title" style={{ marginBottom: 0 }}>Create a Note</h2>
@@ -2006,7 +2169,7 @@ export default function NotesPage() {
 
           <section className="card">
             <div className="toolbar toolbar-wrap">
-              <h2 className="title" style={{ marginBottom: 0 }}>Your Notes</h2>
+              <h2 id="your-notes-heading" className="title" style={{ marginBottom: 0 }}>Your Notes</h2>
               <NoteCount
                 notes={notes}
                 currentFilter={

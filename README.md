@@ -8,6 +8,13 @@ Update: Voice-to-Text Dictation
 - The web app now includes a voice-to-text feature using the browser Web Speech API.
 - See NotesAppWebApplication/README.md for usage instructions, browser support, and limitations.
 
+Update: Recently Edited
+- A "Recently Edited" section appears near the top of the Notes page, showing the most recently modified notes based on updatedAt.
+- Defaults: top 5 notes within the last 7 days. Configure via env vars:
+  - REACT_APP_RECENTLY_EDITED_COUNT (default 5)
+  - REACT_APP_RECENTLY_EDITED_DAYS (default 7)
+- Includes a "View all" button to jump to the main list and a "See more" control to expand the recent list.
+- Locked notes render with a lock placeholder without exposing plaintext content.
 
 Backup & Restore
 - Frontend-only mode: backups are stored in browser localStorage with optional export/import of .json files.
