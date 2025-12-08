@@ -8,12 +8,13 @@
     "react-scripts": "^5.0.1"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "node scripts/dev.cjs",
     "dev": "node scripts/dev.cjs",
     "start:dev": "npm run dev",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "postinstall": "node -e \"console.log('postinstall: ensuring deps ready')\""
   },
   "eslintConfig": {
     "extends": "react-app"

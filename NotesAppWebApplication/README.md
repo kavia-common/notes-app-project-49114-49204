@@ -15,8 +15,8 @@ In the project directory, you can run:
 
 ### `npm start`
 
-Runs the app in development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Runs the app in development mode using a container-friendly launcher that binds to 0.0.0.0 and honors PORT.\
+Open [http://localhost:3000](http://localhost:3000) to view it in your browser (or the container URL provided by your environment).
 
 ### `npm run dev`
 
@@ -28,9 +28,14 @@ Respects, in order of precedence:
 - Fallbacks: `REACT_APP_PORT` for port, and `0.0.0.0` for host; default port 3000
 
 Examples:
+- HOST=0.0.0.0 PORT=3000 npm start
 - HOST=0.0.0.0 PORT=3000 npm run dev
 - REACT_APP_PORT=3000 npm run dev
 - npm run dev -- --port 3000 --host 0.0.0.0
+
+Healthcheck:
+- Root path `/` responds with the CRA index page once the dev server is ready.
+- You can influence host/port via `.env` (see `.env.example`).
 
 ### `npm test`
 
