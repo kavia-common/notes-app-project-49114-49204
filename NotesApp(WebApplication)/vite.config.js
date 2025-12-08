@@ -12,14 +12,17 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      host: true, // 0.0.0.0
+      // Bind to all interfaces and allow the QA preview host
+      host: '0.0.0.0',
       port,
-      strictPort: true
+      strictPort: true,
+      allowedHosts: ['vscode-internal-31398-qa.qa01.cloud.kavia.ai']
     },
     preview: {
-      host: true,
+      host: '0.0.0.0',
       port,
-      strictPort: true
+      strictPort: true,
+      allowedHosts: ['vscode-internal-31398-qa.qa01.cloud.kavia.ai']
     },
     define: {
       // PUBLIC_INTERFACE
