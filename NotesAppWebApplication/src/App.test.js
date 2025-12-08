@@ -2,8 +2,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import App from "./App";
 
 /**
- * Basic integration tests for create and edit flows using localStorage fallback.
- * We rely on notesService local store when API is not configured in tests.
+ * Integration tests including sorting and category filtering
+ * using notesService local storage fallback.
  */
 
 beforeEach(() => {
@@ -61,4 +61,78 @@ test("editing a note updates its title and content", async () => {
   await waitFor(() => expect(screen.getByText("New Title")).toBeInTheDocument());
   expect(screen.getByText("New Content")).toBeInTheDocument();
   expect(screen.queryByText("Old Title")).not.toBeInTheDocument();
+});
+
+test("sort by title ascending and descending works", async () => {
+  render(<App />);
+
+  // Create two notes
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Bravo" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "B content" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+  await waitFor(() => expect(screen.getByText("Bravo")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Alpha" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "A content" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+  await waitFor(() => expect(screen.getByText("Alpha")).toBeInTheDocument());
+
+  // Choose title ascending
+  const sortSelects = screen.getAllByLabelText(/Sort notes/i);
+  fireEvent.change(sortSelects[0], { target: { value: "title_asc" } });
+
+  const itemsAsc = screen.getAllByRole("listitem");
+  expect(itemsAsc[0]).toHaveTextContent("Alpha");
+
+  // Choose title descending
+  fireEvent.change(sortSelects[0], { target: { value: "title_desc" } });
+  const itemsDesc = screen.getAllByRole("listitem");
+  expect(itemsDesc[0]).toHaveTextContent("Bravo");
+});
+
+test("category filtering shows only matching notes", async () => {
+  render(<App />);
+
+  // Create three notes with categories
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Work plan" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "Do tasks" } });
+  fireEvent.change(screen.getByLabelText(/Categories \(comma-separated\)/i), {
+    target: { value: "Work, Planning" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  await waitFor(() => expect(screen.getByText("Work plan")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Home chores" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "Clean up" } });
+  fireEvent.change(screen.getByLabelText(/Categories \(comma-separated\)/i), {
+    target: { value: "Home" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  await waitFor(() => expect(screen.getByText("Home chores")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Trip ideas" } });
+  fireEvent.change(screen.getByLabelText(/^Content$/i), { target: { value: "Visit mountains" } });
+  fireEvent.change(screen.getByLabelText(/Categories \(comma-separated\)/i), {
+    target: { value: "Planning, Travel" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  await waitFor(() => expect(screen.getByText("Trip ideas")).toBeInTheDocument());
+
+  // Click category "Planning" from sidebar
+  const planningBtn = screen.getByRole("button", { name: /Planning/i });
+  fireEvent.click(planningBtn);
+
+  // Only notes with Planning should be visible (Work plan and Trip ideas)
+  const items = screen.getAllByRole("listitem");
+  const texts = items.map((li) => li.textContent || "");
+  expect(texts.some((t) => t.includes("Home chores"))).toBe(false);
+  expect(texts.some((t) => t.includes("Work plan"))).toBe(true);
+  expect(texts.some((t) => t.includes("Trip ideas"))).toBe(true);
+
+  // Back to All Notes
+  fireEvent.click(screen.getByRole("button", { name: /All Notes/i }));
+  const allItems = screen.getAllByRole("listitem");
+  expect(allItems.length >= 3).toBe(true);
 });
