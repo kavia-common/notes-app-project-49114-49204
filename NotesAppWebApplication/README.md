@@ -35,6 +35,40 @@ Caveats:
 - This is browser-local only. Clearing browser data will remove backups unless you downloaded them as files.
 - If a backend is introduced, migrate to server-side backup endpoints and filesystem storage.
 
+## Voice-to-Text Dictation
+
+You can dictate notes using your microphone with the browser Web Speech API:
+
+- Microphone button to start/stop dictation
+- Language selection (default en-US)
+- Insert mode: Append to current content or Replace it
+- Live listening indicator and interim transcript preview
+- Error and permission messages
+- Quick Create: make a new note directly from captured speech (available in Create section)
+
+How to use:
+1. In the Create section, click “🎤 Dictate” to start listening. Language and mode can be configured.
+2. Speak into your mic; interim text appears and final text inserts into the content field (append or replace).
+3. Click “⏹ Stop” to stop listening.
+4. Use “➕ Quick Create” to create a new note instantly from the last finalized speech.
+
+Edit modal:
+- The same dictation UI appears above the content field in the Edit dialog to insert dictated text into an existing note.
+
+Permissions and privacy:
+- Your browser will prompt for microphone access on first use. Grant permission for dictation to work.
+- If denied, re-enable permissions in your browser’s site settings.
+- Speech processing is handled by the browser; no extra backend is used.
+
+Browser support:
+- Supported: Most Chromium-based browsers (Chrome, Edge).
+- Partial/No support: Firefox, Safari, and some mobile browsers. If unsupported, the UI will show a helpful message.
+
+Limitations:
+- Web Speech API is experimental; accuracy/availability varies by browser.
+- Long sessions may auto-stop; click Dictate again to resume.
+- Background noise can reduce accuracy.
+
 ## Features
 
 - **Lightweight**: No heavy UI frameworks - uses only vanilla CSS and React

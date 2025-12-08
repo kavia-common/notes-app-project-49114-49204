@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   listNotes,
   listCategories,
@@ -21,6 +21,8 @@ import {
   toggleFavorite,
 } from "../services/notesService";
 import "./notes.css";
+import VoiceDictation from "../components/VoiceDictation";
+import { VoiceInsertMode, appendWithSpace } from "../services/voiceToText";
 import {
   listBackups,
   getLatestBackupMeta,
@@ -91,6 +93,40 @@ export default function NotesPage() {
   const [editCatsInput, setEditCatsInput] = useState("");
   const [editAttachments, setEditAttachments] = useState([]); // working copy for modal
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Voice dictation UI state
+  const [isListeningCreate, setIsListeningCreate] = useState(false);
+  const [isListeningEdit, setIsListeningEdit] = useState(false);
+
+  // PUBLIC_INTERFACE
+  const handleDictationTextCreate = useCallback(({ text, mode }) => {
+    /** Inserts dictated text into the Create form content field. */
+    if (!text || !text.trim()) return;
+    if (mode === VoiceInsertMode.REPLACE) {
+      setContent(text.trim());
+    } else {
+      setContent((prev) => appendWithSpace(prev, text));
+    }
+  }, []);
+
+  // PUBLIC_INTERFACE
+  const handleDictationTextEdit = useCallback(({ text, mode }) => {
+    /** Inserts dictated text into the Edit modal content field. */
+    if (!text || !text.trim()) return;
+    if (mode === VoiceInsertMode.REPLACE) {
+      setEditContent(text.trim());
+    } else {
+      setEditContent((prev) => appendWithSpace(prev, text));
+    }
+  }, []);
+
+  const handleDictationListeningCreate = useCallback((listening) => setIsListeningCreate(!!listening), []);
+  const handleDictationListeningEdit = useCallback((listening) => setIsListeningEdit(!!listening), []);
+  const handleDictationError = useCallback((err) => {
+    // Keep UX simple; can be replaced by toast system later.
+    // eslint-disable-next-line no-alert
+    alert(`Voice error: ${err?.error || err?.message || "Unknown error"}`);
+  }, []);
 
   // Versions UI state
   const [showVersions, setShowVersions] = useState(false);
@@ -488,6 +524,34 @@ export default function NotesPage() {
     return ts.toISOString();
   }
 
+  // PUBLIC_INTERFACE
+  const handleQuickCreateFromSpeech = useCallback(async ({ text }) => {
+    /** Creates a new note directly from the captured speech. */
+    if (!text?.trim()) return;
+    const trimmed = text.trim();
+    const autoTitle = trimmed.length > 40 ? `${trimmed.slice(0, 40)}...` : trimmed;
+    try {
+      const note = await createNote({
+        title: autoTitle,
+        content: trimmed,
+        categories: [],
+        attachments: [],
+      });
+      setNotes((prev) =>
+        _internal.applySortFilter([note, ...prev], {
+          sortBy,
+          category: selectedCategory,
+          query: debouncedQuery,
+        })
+      );
+      setFeedback({ type: "success", message: "Note created from speech." });
+      resetFeedbackSoon();
+    } catch (e) {
+      setFeedback({ type: "error", message: e?.message || "Failed to create note from speech." });
+      resetFeedbackSoon();
+    }
+  }, [debouncedQuery, selectedCategory, sortBy]);
+  
   async function handleCreate(e) {
     e.preventDefault();
     const t = title.trim();
@@ -923,12 +987,22 @@ export default function NotesPage() {
               </div>
               <div className="form-row">
                 <label htmlFor="note-content">Content</label>
+
+                <VoiceDictation
+                  language="en-US"
+                  insertMode={VoiceInsertMode.APPEND}
+                  onText={handleDictationTextCreate}
+                  onListeningChange={handleDictationListeningCreate}
+                  onError={handleDictationError}
+                  onQuickCreate={handleQuickCreateFromSpeech}
+                />
+
                 <textarea
                   id="note-content"
                   rows="4"
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="Write something..."
+                  placeholder={isListeningCreate ? "Listening… speak now. Your words will appear here." : "Write something..."}
                   required
                   aria-required="true"
                 />
@@ -1302,6 +1376,15 @@ export default function NotesPage() {
               </div>
               <div className="form-row">
                 <label htmlFor="edit-content">Content</label>
+
+                <VoiceDictation
+                  language="en-US"
+                  insertMode={VoiceInsertMode.APPEND}
+                  onText={handleDictationTextEdit}
+                  onListeningChange={handleDictationListeningEdit}
+                  onError={handleDictationError}
+                />
+
                 <textarea
                   id="edit-content"
                   rows="4"
@@ -1309,6 +1392,7 @@ export default function NotesPage() {
                   onChange={(e) => setEditContent(e.target.value)}
                   required
                   aria-required="true"
+                  placeholder={isListeningEdit ? "Listening… speak now. Your words will appear here." : undefined}
                 />
               </div>
               <div className="form-row">

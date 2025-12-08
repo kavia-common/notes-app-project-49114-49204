@@ -1,5 +1,10 @@
 # notes-app-project-49114-49204
 
+Update: Voice-to-Text Dictation
+- The web app now includes a voice-to-text feature using the browser Web Speech API.
+- See NotesAppWebApplication/README.md for usage instructions, browser support, and limitations.
+
+
 Backup & Restore
 - Frontend-only mode: backups are stored in browser localStorage with optional export/import of .json files.
 - Settings page offers: Backup now, Restore from latest, Download backup, Upload backup.
