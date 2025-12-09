@@ -1,13 +1,47 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/**
+ * Simple Vite plugin to expose a frontend health endpoint at /healthz.
+ * This ensures the preview system can detect readiness independently of the backend.
+ */
+function healthcheckPlugin() {
+  return {
+    name: 'frontend-healthcheck',
+    configureServer(server) {
+      server.middlewares.use('/healthz', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.statusCode = 200;
+        res.end(JSON.stringify({ status: 'ok', service: 'frontend' }));
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use('/healthz', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.statusCode = 200;
+        res.end(JSON.stringify({ status: 'ok', service: 'frontend' }));
+      });
+    },
+  };
+}
+
 // PUBLIC_INTERFACE
 export default defineConfig(({ mode }) => {
   /** Load env prefixed with REACT_APP_ for client usage */
   const env = loadEnv(mode, process.cwd(), 'REACT_APP_');
 
-  /** Determine dev server port: prefer REACT_APP_PORT, default 3000 */
-  const port = Number(env.REACT_APP_PORT || process.env.REACT_APP_PORT || 3000);
+  /**
+   * Determine dev server port robustly:
+   * - Prefer REACT_APP_PORT (frontend-specific)
+   * - Fallback to generic PORT often set by hosting environments
+   * - Default to 3000
+   */
+  const port = Number(
+    env.REACT_APP_PORT ||
+      process.env.REACT_APP_PORT ||
+      process.env.PORT ||
+      3000
+  );
 
   /** Determine backend port used in proxy; default 5179 */
   const backendPort = Number(process.env.BACKEND_PORT || 5179);
@@ -24,7 +58,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react()],
+    plugins: [react(), healthcheckPlugin()],
     server: {
       // Bind to all interfaces and allow the QA preview host
       host: '0.0.0.0',
@@ -32,12 +66,7 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       allowedHosts,
       proxy: {
-        // Explicitly proxy backend health and API calls to FastAPI during development
-        '/healthz': {
-          target: `http://localhost:${backendPort}`,
-          changeOrigin: true,
-          secure: false,
-        },
+        // Explicitly proxy backend API calls to FastAPI during development
         '/api': {
           target: `http://localhost:${backendPort}`,
           changeOrigin: true,
