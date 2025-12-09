@@ -30,24 +30,21 @@ export default defineConfig(({ mode }) => {
   // Load env prefixed with REACT_APP_ for client usage
   const env = loadEnv(mode, process.cwd(), 'REACT_APP_');
 
-  // Determine dev/preview server port, default 3000
-  const port = Number(
-    env.REACT_APP_PORT ||
-      process.env.REACT_APP_PORT ||
-      process.env.PORT ||
-      3000
-  );
+  // Force known dev/preview server port and host
+  const port = 3000;
 
   // Backend port used in proxy; default 5179
   const backendPort = Number(process.env.BACKEND_PORT || 5179);
 
-  // Allow preview host(s). Avoid over-restricting; rely on defaults if not provided.
-  const allowedHosts = [];
-  if (process.env.PREVIEW_HOST) {
-    allowedHosts.push(process.env.PREVIEW_HOST);
-  } else if (process.env.HOSTNAME) {
-    allowedHosts.push(process.env.HOSTNAME);
-  }
+  // Explicitly allow the CI/preview host(s) to avoid Vite "Blocked request" errors.
+  // Primary host per task:
+  const previewHost = 'vscode-internal-35218-qa.qa01.cloud.kavia.ai';
+  // Also optionally enable a wildcard for similar subdomains on the same domain.
+  // Note: Vite supports strings here; patterns are matched by vite's internal allowlist logic.
+  const allowedHosts = [
+    previewHost,
+    '*.qa01.cloud.kavia.ai',
+  ];
 
   return {
     plugins: [react(), healthcheckPlugin()],
@@ -55,8 +52,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      // When empty, Vite will use sensible defaults; prevents accidental blocking for unknown preview hostnames.
-      allowedHosts: allowedHosts.length ? allowedHosts : undefined,
+      allowedHosts,
       proxy: {
         '/api': {
           target: `http://localhost:${backendPort}`,
@@ -76,7 +72,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      allowedHosts: allowedHosts.length ? allowedHosts : undefined,
+      allowedHosts,
     },
     // Ensure the default index.html is used for SPA at '/'
     appType: 'spa',
