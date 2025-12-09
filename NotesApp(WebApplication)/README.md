@@ -8,7 +8,8 @@ Run locally:
 - Start both servers: npm run dev:all
   - Frontend: Vite on REACT_APP_PORT (default 3000)
   - Backend: FastAPI on BACKEND_PORT (default 5179)
-  - Vite proxies /healthz, /api/* and /ws to the backend.
+  - Vite proxies /api/* and /ws to the backend.
+  - Note: The frontend itself serves /healthz via a lightweight Vite middleware. The SPA (index.html) is served at '/'.
 
 Alternative:
 - Start backend only: npm run dev:backend
@@ -21,4 +22,6 @@ Environment:
 - Backend port configured via BACKEND_PORT (default 5179)
 
 Health:
-- Frontend reports backend status by calling /healthz (proxied to backend). When backend is running, it should show "backend: healthy".
+- The frontend exposes a health endpoint at GET /healthz (returns { "status": "ok", "service": "frontend" }).
+- The app UI loads at '/', and API endpoints are under '/api'.
+- When the backend is running, the app's status section should show "backend: healthy".
