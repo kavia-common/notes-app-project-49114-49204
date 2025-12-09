@@ -67,6 +67,26 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # Namespaced API under /api to align with proxy configuration
+
+    # PUBLIC_INTERFACE
+    @app.get(
+        "/api/healthz",
+        tags=["health"],
+        summary="API namespace health check",
+        description="Returns 200 OK if backend API namespace is healthy and reachable via proxy.",
+        response_model=Dict[str, str],
+        responses={200: {"description": "API namespace healthy", "content": {"application/json": {}}}},
+        operation_id="api_health_check",
+    )
+    def api_healthz() -> Dict[str, str]:
+        """
+        API health check under /api namespace.
+
+        Returns:
+            dict: A simple status message indicating health for /api.
+        """
+        return {"status": "ok", "scope": "api"}
+
     # PUBLIC_INTERFACE
     @app.get("/api/notes", response_model=List[Note], tags=["notes"], summary="List notes", description="List all notes.")
     def list_notes():
@@ -74,9 +94,10 @@ def create_app() -> FastAPI:
         List all notes.
 
         Returns:
-            List[Note]: Array of notes.
+            List[Note]: Array of notes (empty list when no notes exist).
         """
-        return NOTES
+        # Return a shallow copy to avoid accidental external mutation
+        return list(NOTES)
 
     # PUBLIC_INTERFACE
     @app.post("/api/notes", response_model=Note, tags=["notes"], summary="Create note", description="Create a new note.")
