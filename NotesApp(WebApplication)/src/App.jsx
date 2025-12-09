@@ -2,69 +2,136 @@ import React, { useEffect, useState } from 'react';
 
 // PUBLIC_INTERFACE
 export default function App() {
-  /** This is a public component entry point for the web app. */
-  /** This reads configuration injected at build time by Vite (vite.config.js) */
+  /** This is the public UI entry for the Notes app. Renders even if backend is down. */
   const cfg = typeof __APP_CONFIG__ !== 'undefined' ? __APP_CONFIG__ : {};
 
-  const [frontendHealth, setFrontendHealth] = useState('unknown');
-  const [backendHealth, setBackendHealth] = useState('unknown');
-  const [debugHealthUrl, setDebugHealthUrl] = useState('');
-  const [debugBackendUrl, setDebugBackendUrl] = useState('');
+  const [notes, setNotes] = useState([]);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState(null);
 
+  // Try to load notes from backend if available; otherwise show an empty UI.
   useEffect(() => {
     let cancelled = false;
-
-    // Frontend health served by Vite middleware
-    const healthPath = '/healthz';
-    const url = healthPath;
-    setDebugHealthUrl(url);
-    fetch(url, { method: 'GET' })
+    const apiBase = cfg.API_BASE || '/api';
+    const url = `${apiBase}/notes`;
+    setLoading(true);
+    fetch(url)
       .then(async (r) => {
         if (cancelled) return;
-        setFrontendHealth(r.ok ? 'healthy' : `fail (${r.status})`);
+        if (!r.ok) {
+          setApiError(`Backend unavailable (status ${r.status})`);
+          setNotes([]);
+          return;
+        }
+        const data = await r.json().catch(() => []);
+        setNotes(Array.isArray(data) ? data : []);
+        setApiError(null);
       })
-      .catch(() => !cancelled && setFrontendHealth('unreachable'));
-
-    // Backend health inferred by calling a proxied API endpoint
-    // Using /api/notes (should return 200 and an array)
-    const apiProbe = `${cfg.API_BASE || '/api'}/notes`;
-    setDebugBackendUrl(apiProbe);
-    fetch(apiProbe, { method: 'GET' })
-      .then(async (r) => {
+      .catch(() => {
         if (cancelled) return;
-        setBackendHealth(r.ok ? 'healthy' : `fail (${r.status})`);
+        setApiError('Backend unreachable');
+        setNotes([]);
       })
-      .catch(() => !cancelled && setBackendHealth('unreachable'));
+      .finally(() => !cancelled && setLoading(false));
 
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    const apiBase = cfg.API_BASE || '/api';
+    try {
+      const r = await fetch(`${apiBase}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, content }),
+      });
+      if (!r.ok) throw new Error(`Failed (${r.status})`);
+      const note = await r.json();
+      setNotes((prev) => [...prev, note]);
+      setTitle('');
+      setContent('');
+      setApiError(null);
+    } catch (err) {
+      // Do not block UI; show message
+      setApiError('Cannot create note: backend not running');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    const apiBase = cfg.API_BASE || '/api';
+    try {
+      const r = await fetch(`${apiBase}/notes/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error('delete failed');
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+    } catch {
+      setApiError('Cannot delete note: backend not running');
+    }
+  };
+
   return (
-    <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif', margin: '2rem' }}>
-      <h1>Notes App</h1>
-      <p>Frontend status: {frontendHealth}</p>
-      <small>Frontend health URL: {debugHealthUrl}</small>
-      <p style={{ marginTop: '0.5rem' }}>Backend status: {backendHealth}</p>
-      <small>Backend probe URL: {debugBackendUrl}</small>
-      <section style={{ marginTop: '1rem' }}>
-        <h2>Configuration</h2>
-        <ul>
-          <li>PORT: {cfg.PORT}</li>
-          <li>API_BASE: {cfg.API_BASE}</li>
-          <li>BACKEND_URL: {cfg.BACKEND_URL}</li>
-          <li>FRONTEND_URL: {cfg.FRONTEND_URL}</li>
-          <li>WS_URL: {cfg.WS_URL}</li>
-          <li>HEALTHCHECK_PATH: {cfg.HEALTHCHECK_PATH}</li>
-          <li>NODE_ENV: {cfg.NODE_ENV}</li>
-          <li>LOG_LEVEL: {cfg.LOG_LEVEL}</li>
-          <li>EXPERIMENTS_ENABLED: {String(cfg.EXPERIMENTS_ENABLED)}</li>
+    <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif', margin: '2rem', maxWidth: 800 }}>
+      <h1>Notes</h1>
+
+      {apiError && (
+        <div role="status" aria-live="polite" style={{ background: '#fff8e1', border: '1px solid #ffe0b2', padding: '0.5rem 0.75rem', borderRadius: 6, marginBottom: '1rem' }}>
+          {apiError}. The UI works in frontend-only mode. Start backend to enable saving.
+        </div>
+      )}
+
+      <form onSubmit={handleCreate} style={{ display: 'grid', gap: '0.5rem', marginBottom: '1.5rem' }}>
+        <label>
+          <span style={{ display: 'block', fontWeight: 600 }}>Title</span>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Note title"
+            style={{ width: '100%', padding: '0.5rem', borderRadius: 6, border: '1px solid #ccc' }}
+          />
+        </label>
+        <label>
+          <span style={{ display: 'block', fontWeight: 600 }}>Content</span>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Write something..."
+            rows={4}
+            style={{ width: '100%', padding: '0.5rem', borderRadius: 6, border: '1px solid #ccc' }}
+          />
+        </label>
+        <div>
+          <button type="submit" style={{ padding: '0.5rem 0.9rem', borderRadius: 6, background: '#1a73e8', color: '#fff', border: 'none' }}>
+            Add Note
+          </button>
+        </div>
+      </form>
+
+      <h2 style={{ marginBottom: '0.5rem' }}>Your Notes</h2>
+      {loading ? (
+        <p>Loading…</p>
+      ) : notes.length === 0 ? (
+        <p>No notes yet. {apiError ? 'Start backend to load/save notes.' : 'Create your first note.'}</p>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '0.75rem' }}>
+          {notes.map((n) => (
+            <li key={n.id} style={{ border: '1px solid #ddd', borderRadius: 8, padding: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{n.title}</div>
+                  {n.content && <div style={{ color: '#555', marginTop: 4, whiteSpace: 'pre-wrap' }}>{n.content}</div>}
+                </div>
+                <button onClick={() => handleDelete(n.id)} style={{ background: 'transparent', border: '1px solid #e57373', color: '#e57373', borderRadius: 6, padding: '0.25rem 0.5rem' }}>
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
         </ul>
-      </section>
-      <section style={{ marginTop: '1rem' }}>
-        <p>The app is running using Vite dev/preview server on port {cfg.PORT || 3000}. The SPA should render at '/'.</p>
-      </section>
+      )}
     </div>
   );
 }

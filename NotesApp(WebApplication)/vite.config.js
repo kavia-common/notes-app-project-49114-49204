@@ -2,9 +2,8 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /**
- * Simple Vite plugin to expose a frontend health endpoint at /healthz (only).
- * Do not intercept '/' so that the SPA index.html is served by Vite as usual.
- * This plugin intentionally does not register any catch-all or root handlers.
+ * Minimal health endpoint plugin for both dev and preview.
+ * Only serves GET /healthz -> 200 JSON. Does not intercept '/'.
  */
 function healthcheckPlugin() {
   const handler = (_req, res) => {
@@ -15,11 +14,9 @@ function healthcheckPlugin() {
   return {
     name: 'frontend-healthcheck',
     configureServer(server) {
-      // Only intercept /healthz - everything else should fall through to Vite's SPA handling.
       server.middlewares.use('/healthz', handler);
     },
     configurePreviewServer(server) {
-      // Keep parity for preview - only /healthz.
       server.middlewares.use('/healthz', handler);
     },
   };
@@ -27,17 +24,16 @@ function healthcheckPlugin() {
 
 // PUBLIC_INTERFACE
 export default defineConfig(({ mode }) => {
-  // Load env prefixed with REACT_APP_ for client usage
   const env = loadEnv(mode, process.cwd(), 'REACT_APP_');
 
-  // Force known dev/preview server port and host
+  // Always bind to 0.0.0.0:3000 with strictPort for both dev and preview
   const port = 3000;
+  const host = '0.0.0.0';
 
-  // Backend port used in proxy; default 5179
+  // Proxy targets for backend; optional at runtime
   const backendPort = Number(process.env.BACKEND_PORT || 5179);
 
-  // Explicitly allow the CI/preview host(s) to avoid Vite "Blocked request" errors.
-  // Use the known running container host and allow common QA/localhost hosts.
+  // Allow our public preview host and localhost
   const allowedHosts = [
     'vscode-internal-35218-qa.qa01.cloud.kavia.ai',
     '*.qa01.cloud.kavia.ai',
@@ -57,28 +53,28 @@ export default defineConfig(({ mode }) => {
       changeOrigin: true,
       secure: false,
     },
-    // Health is served locally by middleware; any backend health should be under /api if needed.
   };
 
   return {
     plugins: [react(), healthcheckPlugin()],
+    // Ensure SPA served at '/' and no backend probing at server level
+    appType: 'spa',
     server: {
-      host: '0.0.0.0',
+      host,
       port,
       strictPort: true,
       allowedHosts,
       proxy: proxyConfig,
     },
     preview: {
-      host: '0.0.0.0',
+      host,
       port,
       strictPort: true,
       allowedHosts,
-      // Critical: ensure preview behaves like dev and proxies /api and /ws to backend.
       proxy: proxyConfig,
+      // Explicitly ensure index.html is served for SPA at root
+      // Vite preview already does this when appType is 'spa'
     },
-    // Ensure the default index.html is used for SPA at '/'
-    appType: 'spa',
     define: {
       // PUBLIC_INTERFACE
       __APP_CONFIG__: JSON.stringify({
