@@ -50,7 +50,10 @@ export default defineConfig(({ mode }) => {
 
   /** Dynamically allow the current host for preview environments */
   const allowedHosts = [];
-  // Always allow Kavia preview host
+  // Always allow Kavia preview hosts
+  // Required host for this environment:
+  allowedHosts.push('vscode-internal-35218-qa.qa01.cloud.kavia.ai');
+  // Keep previous known host patterns (compatibility with other QA envs)
   allowedHosts.push('vscode-internal-31398-qa.qa01.cloud.kavia.ai');
   // Optionally add current environment-provided hosts
   if (process.env.PREVIEW_HOST) {
