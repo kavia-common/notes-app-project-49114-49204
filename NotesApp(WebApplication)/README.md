@@ -6,10 +6,10 @@ Run locally:
 - Install frontend dependencies: npm install
 - Install backend dependencies: pip install -r backend/requirements.txt
 - Start both servers: npm run dev:all
-  - Frontend: Vite on REACT_APP_PORT (default 3000)
+  - Frontend: Vite on REACT_APP_PORT (default 3000) binding 0.0.0.0 with strictPort
   - Backend: FastAPI on BACKEND_PORT (default 5179)
-  - Vite proxies /api/* and /ws to the backend.
-  - Note: The frontend itself serves /healthz via a lightweight Vite middleware. The SPA (index.html) is served at '/'.
+  - Vite proxies /api/* (HTTP) and /ws (WebSocket) to the backend.
+  - Note: The frontend itself serves only /healthz via a lightweight Vite middleware. The SPA (index.html) is served at '/'.
 
 Alternative:
 - Start backend only: npm run dev:backend

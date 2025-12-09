@@ -38,12 +38,14 @@ export default defineConfig(({ mode }) => {
 
   // Explicitly allow the CI/preview host(s) to avoid Vite "Blocked request" errors.
   // Primary host per task:
+  // Include the live preview host to avoid blocked requests in CI preview.
   const previewHost = 'vscode-internal-35218-qa.qa01.cloud.kavia.ai';
-  // Also optionally enable a wildcard for similar subdomains on the same domain.
-  // Note: Vite supports strings here; patterns are matched by vite's internal allowlist logic.
+  // Also allow wildcards for QA domain; Vite matches host patterns internally.
   const allowedHosts = [
     previewHost,
     '*.qa01.cloud.kavia.ai',
+    'localhost',
+    '127.0.0.1',
   ];
 
   return {
