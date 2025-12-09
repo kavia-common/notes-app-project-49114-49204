@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 /**
  * Simple Vite plugin to expose a frontend health endpoint at /healthz (only).
  * Do not intercept '/' so that the SPA index.html is served by Vite as usual.
+ * This plugin intentionally does not register any catch-all or root handlers.
  */
 function healthcheckPlugin() {
   const handler = (_req, res) => {
@@ -14,11 +15,11 @@ function healthcheckPlugin() {
   return {
     name: 'frontend-healthcheck',
     configureServer(server) {
-      // Only add a handler for /healthz; do not register catch-alls that could shadow '/'
+      // Only intercept /healthz - everything else should fall through to Vite's SPA handling.
       server.middlewares.use('/healthz', handler);
     },
     configurePreviewServer(server) {
-      // Keep parity for preview
+      // Keep parity for preview - only /healthz.
       server.middlewares.use('/healthz', handler);
     },
   };
@@ -40,11 +41,8 @@ export default defineConfig(({ mode }) => {
   // Backend port used in proxy; default 5179
   const backendPort = Number(process.env.BACKEND_PORT || 5179);
 
-  // Dynamically allow preview host(s)
-  const allowedHosts = [
-    'vscode-internal-35218-qa.qa01.cloud.kavia.ai',
-    'vscode-internal-31398-qa.qa01.cloud.kavia.ai',
-  ];
+  // Allow preview host(s). Avoid over-restricting; rely on defaults if not provided.
+  const allowedHosts = [];
   if (process.env.PREVIEW_HOST) {
     allowedHosts.push(process.env.PREVIEW_HOST);
   } else if (process.env.HOSTNAME) {
@@ -57,7 +55,8 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      allowedHosts,
+      // When empty, Vite will use sensible defaults; prevents accidental blocking for unknown preview hostnames.
+      allowedHosts: allowedHosts.length ? allowedHosts : undefined,
       proxy: {
         '/api': {
           target: `http://localhost:${backendPort}`,
@@ -70,13 +69,14 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // Health is served locally by middleware; any backend health should be under /api if needed.
       },
     },
     preview: {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      allowedHosts,
+      allowedHosts: allowedHosts.length ? allowedHosts : undefined,
     },
     // Ensure the default index.html is used for SPA at '/'
     appType: 'spa',
