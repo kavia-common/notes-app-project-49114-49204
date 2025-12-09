@@ -31,16 +31,18 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'REACT_APP_');
 
   /**
-   * Determine dev server port robustly:
+   * Determine dev/preview server port robustly:
    * - Prefer REACT_APP_PORT (frontend-specific)
    * - Fallback to generic PORT often set by hosting environments
    * - Default to 3000
+   * Note: npm scripts set --port 3000 explicitly to avoid shell-specific env expansion;
+   * this config still honors env when running Vite without explicit --port.
    */
   const port = Number(
     env.REACT_APP_PORT ||
-      process.env.REACT_APP_PORT ||
-      process.env.PORT ||
-      3000
+    process.env.REACT_APP_PORT ||
+    process.env.PORT ||
+    3000
   );
 
   /** Determine backend port used in proxy; default 5179 */
