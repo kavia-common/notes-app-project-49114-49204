@@ -37,16 +37,28 @@ export default defineConfig(({ mode }) => {
   const backendPort = Number(process.env.BACKEND_PORT || 5179);
 
   // Explicitly allow the CI/preview host(s) to avoid Vite "Blocked request" errors.
-  // Primary host per task:
-  // Include the live preview host to avoid blocked requests in CI preview.
-  const previewHost = 'vscode-internal-35218-qa.qa01.cloud.kavia.ai';
-  // Also allow wildcards for QA domain; Vite matches host patterns internally.
+  // Use the known running container host and allow common QA/localhost hosts.
   const allowedHosts = [
-    previewHost,
+    'vscode-internal-35218-qa.qa01.cloud.kavia.ai',
     '*.qa01.cloud.kavia.ai',
     'localhost',
     '127.0.0.1',
   ];
+
+  const proxyConfig = {
+    '/api': {
+      target: `http://localhost:${backendPort}`,
+      changeOrigin: true,
+      secure: false,
+    },
+    '/ws': {
+      target: `ws://localhost:${backendPort}`,
+      ws: true,
+      changeOrigin: true,
+      secure: false,
+    },
+    // Health is served locally by middleware; any backend health should be under /api if needed.
+  };
 
   return {
     plugins: [react(), healthcheckPlugin()],
@@ -55,26 +67,15 @@ export default defineConfig(({ mode }) => {
       port,
       strictPort: true,
       allowedHosts,
-      proxy: {
-        '/api': {
-          target: `http://localhost:${backendPort}`,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/ws': {
-          target: `ws://localhost:${backendPort}`,
-          ws: true,
-          changeOrigin: true,
-          secure: false,
-        },
-        // Health is served locally by middleware; any backend health should be under /api if needed.
-      },
+      proxy: proxyConfig,
     },
     preview: {
       host: '0.0.0.0',
       port,
       strictPort: true,
       allowedHosts,
+      // Critical: ensure preview behaves like dev and proxies /api and /ws to backend.
+      proxy: proxyConfig,
     },
     // Ensure the default index.html is used for SPA at '/'
     appType: 'spa',

@@ -6,28 +6,36 @@ export default function App() {
   /** This reads configuration injected at build time by Vite (vite.config.js) */
   const cfg = typeof __APP_CONFIG__ !== 'undefined' ? __APP_CONFIG__ : {};
 
-  const [health, setHealth] = useState('unknown');
+  const [frontendHealth, setFrontendHealth] = useState('unknown');
+  const [backendHealth, setBackendHealth] = useState('unknown');
   const [debugHealthUrl, setDebugHealthUrl] = useState('');
+  const [debugBackendUrl, setDebugBackendUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
 
-    // Always use relative paths during Vite dev so proxy handles routing
+    // Frontend health served by Vite middleware
     const healthPath = '/healthz';
     const url = healthPath;
-
     setDebugHealthUrl(url);
-
     fetch(url, { method: 'GET' })
       .then(async (r) => {
         if (cancelled) return;
-        if (r.ok) {
-          setHealth('backend: healthy');
-        } else {
-          setHealth(`backend: fail (${r.status})`);
-        }
+        setFrontendHealth(r.ok ? 'healthy' : `fail (${r.status})`);
       })
-      .catch(() => !cancelled && setHealth('backend: unreachable'));
+      .catch(() => !cancelled && setFrontendHealth('unreachable'));
+
+    // Backend health inferred by calling a proxied API endpoint
+    // Using /api/notes (should return 200 and an array)
+    const apiProbe = `${cfg.API_BASE || '/api'}/notes`;
+    setDebugBackendUrl(apiProbe);
+    fetch(apiProbe, { method: 'GET' })
+      .then(async (r) => {
+        if (cancelled) return;
+        setBackendHealth(r.ok ? 'healthy' : `fail (${r.status})`);
+      })
+      .catch(() => !cancelled && setBackendHealth('unreachable'));
+
     return () => {
       cancelled = true;
     };
@@ -36,8 +44,10 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif', margin: '2rem' }}>
       <h1>Notes App</h1>
-      <p>Status: {health}</p>
-      <small>Health URL: {debugHealthUrl}</small>
+      <p>Frontend status: {frontendHealth}</p>
+      <small>Frontend health URL: {debugHealthUrl}</small>
+      <p style={{ marginTop: '0.5rem' }}>Backend status: {backendHealth}</p>
+      <small>Backend probe URL: {debugBackendUrl}</small>
       <section style={{ marginTop: '1rem' }}>
         <h2>Configuration</h2>
         <ul>
@@ -53,7 +63,7 @@ export default function App() {
         </ul>
       </section>
       <section style={{ marginTop: '1rem' }}>
-        <p>The app is running using Vite dev server. It should be accessible on port {cfg.PORT || 3000}.</p>
+        <p>The app is running using Vite dev/preview server on port {cfg.PORT || 3000}. The SPA should render at '/'.</p>
       </section>
     </div>
   );
